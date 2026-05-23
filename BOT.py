@@ -1,7 +1,7 @@
 import telebot, requests, pandas as pd, numpy as np, time, threading, json, os
 from flask import Flask
 
-TOKEN = "8822165462:AAHh5-XRPEzLyx5WJ1k-HlXUbBU8HRPXbks"
+TOKEN = "8822165462:AAE0bK08EDjW-VBf0H-j_OxV3oBp3KNFmaU"
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
