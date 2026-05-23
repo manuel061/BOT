@@ -17,7 +17,7 @@ LOG_FILE = "operazioni_log.json"
 
 @app.route('/')
 def home():
-    return "Bot Trader Perfetto Interi e Server Attivo!", 200
+    return "Bot Trader Perfetto - Layout Chirurgico Attivo!", 200
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
@@ -42,9 +42,9 @@ def get_stato():
         "ATTIVO": False,
         "TRADE_APERTO": False,
         "DIREZIONE_TRADE": None,
-        "PREZZO_INGRESSO_EUR": 0,
-        "STOP_LOSS_EUR": 0,
-        "TAKE_PROFIT_EUR": 0,
+        "PREZZO_INGRESSO_EUR": 0.0,
+        "STOP_LOSS_EUR": 0.0,
+        "TAKE_PROFIT_EUR": 0.0,
         "BREAK_EVEN_FATTO": False
     }
 
@@ -112,15 +112,14 @@ def avvia_scansione(chat_id):
                             s["STOP_LOSS_EUR"] = s["PREZZO_INGRESSO_EUR"]
                             s["BREAK_EVEN_FATTO"] = True
                             salva_stato(s)
-                            bot.send_message(chat_id, f"🛡️ *BREAK EVEN MATEMATICO CONFERMATO* | {sym}-EUR\nLo Stop Loss è stato ufficialmente spostato a prezzo d'ingresso ({int(s['STOP_LOSS_EUR'])} €). Rischio Azzerato!", parse_mode="Markdown")
+                            bot.send_message(chat_id, f"🛡️ *BREAK EVEN MATEMATICO CONFERMATO*\nStop Loss spostato a ingresso.", parse_mode="Markdown")
                         
                         elif p_corrente_eur >= s["TAKE_PROFIT_EUR"]:
-                            bot.send_message(chat_id, f"🎉 *TARGET COLPITO (TAKE PROFIT)!* | +{int(s['CAPITALE']*0.02*1.5)} €", parse_mode="Markdown")
+                            bot.send_message(chat_id, f"🎉 *TARGET COLPITO (TAKE PROFIT)!*", parse_mode="Markdown")
                             s["TRADE_APERTO"] = False
                             salva_stato(s)
                         elif p_corrente_eur <= s["STOP_LOSS_EUR"]:
-                            perdita = 0 if s["BREAK_EVEN_FATTO"] else int(s["CAPITALE"] * 0.02)
-                            bot.send_message(chat_id, f"🛑 *STOP LOSS COLPITO.* Chiusura trade. Perdita: -{perdita} €", parse_mode="Markdown")
+                            bot.send_message(chat_id, f"🛑 *STOP LOSS COLPITO.*", parse_mode="Markdown")
                             s["TRADE_APERTO"] = False
                             salva_stato(s)
                             
@@ -131,15 +130,14 @@ def avvia_scansione(chat_id):
                             s["STOP_LOSS_EUR"] = s["PREZZO_INGRESSO_EUR"]
                             s["BREAK_EVEN_FATTO"] = True
                             salva_stato(s)
-                            bot.send_message(chat_id, f"🛡️ *BREAK EVEN MATEMATICO CONFERMATO* | {sym}-EUR\nLo Stop Loss è stato ufficialmente spostato a prezzo d'ingresso ({int(s['STOP_LOSS_EUR'])} €). Rischio Azzerato!", parse_mode="Markdown")
+                            bot.send_message(chat_id, f"🛡️ *BREAK EVEN MATEMATICO CONFERMATO*\nStop Loss spostato a ingresso.", parse_mode="Markdown")
                         
                         elif p_corrente_eur <= s["TAKE_PROFIT_EUR"]:
-                            bot.send_message(chat_id, f"🎉 *TARGET COLPITO (TAKE PROFIT)!* | +{int(s['CAPITALE']*0.02*1.5)} €", parse_mode="Markdown")
+                            bot.send_message(chat_id, f"🎉 *TARGET COLPITO (TAKE PROFIT)!*", parse_mode="Markdown")
                             s["TRADE_APERTO"] = False
                             salva_stato(s)
                         elif p_corrente_eur >= s["STOP_LOSS_EUR"]:
-                            perdita = 0 if s["BREAK_EVEN_FATTO"] else int(s["CAPITALE"] * 0.02)
-                            bot.send_message(chat_id, f"🛑 *STOP LOSS COLPITO.* Chiusura trade. Perdita: -{perdita} €", parse_mode="Markdown")
+                            bot.send_message(chat_id, f"🛑 *STOP LOSS COLPITO.*", parse_mode="Markdown")
                             s["TRADE_APERTO"] = False
                             salva_stato(s)
                 
@@ -173,7 +171,7 @@ def avvia_scansione(chat_id):
                             stop_loss = p_chiusura_eur - distanza_sl if (distanza_sl < p_chiusura_eur * 0.05) else p_chiusura_eur * 0.98
                             take_profit = p_chiusura_eur + (p_chiusura_eur - stop_loss) * 1.5
                         else:
-                            stop_loss = p_chiusura_eur + Policy_sl if ('Policy_sl' in locals()) else p_chiusura_eur + distanza_sl if (distanza_sl < p_chiusura_eur * 0.05) else p_chiusura_eur * 1.02
+                            stop_loss = p_chiusura_eur + distanza_sl if (distanza_sl < p_chiusura_eur * 0.05) else p_chiusura_eur * 1.02
                             take_profit = p_chiusura_eur - (stop_loss - p_chiusura_eur) * 1.5
 
                         rischio_monetario = s["CAPITALE"] * 0.02
@@ -182,37 +180,31 @@ def avvia_scansione(chat_id):
                         if ampiezza_stop_percentuale > 0:
                             posizione_euro = rischio_monetario / ampiezza_stop_percentuale
                             lotti = posizione_euro / p_chiusura_eur
-                            guadagno_stimato = rischio_monetario * 1.5
                         else:
                             lotti = 0.0
-                            guadagno_stimato = 0.0
                         
-                        # ARROTONDAMENTO AD INTERI CON RACCOGLIMENTO MATEMATICO
-                        p_entrata_int = int(round(p_chiusura_eur))
-                        sl_int = int(round(stop_loss))
-                        tp_int = int(round(take_profit))
-                        lotti_int = int(round(lotti)) if lotti >= 1 else round(lotti, 4) # Frazione se minore di 1, intero se maggiore
-                        guadagno_int = int(round(guadagno_stimato))
+                        # ARROTONDAMENTO A MASSIMO 2 DECIMALI CON RACCOGLIMENTO MATEMATICO
+                        p_entrata_clean = int(p_chiusura_eur) if p_chiusura_eur.is_integer() else round(p_chiusura_eur, 2)
+                        sl_clean = int(stop_loss) if stop_loss.is_integer() else round(stop_loss, 2)
+                        tp_clean = int(take_profit) if take_profit.is_integer() else round(take_profit, 2)
+                        
+                        # Gestione lotti (fino a 4 decimali se micro size inferiore a 1 per non azzerarla, altrimenti massimo 2 decimali)
+                        lotti_clean = int(lotti) if lotti.is_integer() else round(lotti, 2) if lotti >= 1 else round(lotti, 4)
 
                         s["TRADE_APERTO"] = True
                         s["DIREZIONE_TRADE"] = direzione
-                        s["PREZZO_INGRESSO_EUR"] = p_entrata_int
-                        s["STOP_LOSS_EUR"] = sl_int
-                        s["TAKE_PROFIT_EUR"] = tp_int
+                        s["PREZZO_INGRESSO_EUR"] = float(p_entrata_clean)
+                        s["STOP_LOSS_EUR"] = float(sl_clean)
+                        s["TAKE_PROFIT_EUR"] = float(tp_clean)
                         s["BREAK_EVEN_FATTO"] = False
                         salva_stato(s)
                         
+                        # INTERFACCIA CHIRURGICA RICHIESTA: SOLO DATI NUDI E PURI
                         messaggio_segnale = (
-                            f"🚨 *SEGNALE DI TRADING* | {sym}-EUR\n"
-                            f"🌐 *Exchange Server:* {s['SERVER']}\n"
-                            f"🟢 *OPERAZIONE:* {direzione}\n"
-                            f"🪙 *Lotti (Size):* {lotti_int} {sym}\n\n"
-                            f"⏱️ *Tempistica:* ENTRA ADESSO (Candela Confermata)\n"
-                            f"💶 *Prezzo Entrata:* {p_entrata_int} €\n"
-                            f"🛑 *Stop Loss:* {sl_int} €\n"
-                            f"🎯 *Take Profit:* {tp_int} €\n\n"
-                            f"💰 *Guadagno Stimato:* +{guadagno_int} €\n"
-                            f"🛡️ _Break Even matematico attivo a chiusura candela_"
+                            f"*{direzione}* {p_entrata_clean} €\n"
+                            f"{lotti_clean}\n"
+                            f"{sl_clean} €\n"
+                            f"{tp_clean} €"
                         )
                         bot.send_message(chat_id, messaggio_segnale, parse_mode="Markdown")
                         ultimo_minuto_segnalato = minuto_attuale
@@ -225,7 +217,6 @@ def avvia_scansione(chat_id):
 # --- COMANDI TELEGRAM ---
 @bot.message_handler(commands=['start', 'avvia'])
 def start(m):
-    # Forza la cancellazione del vecchio file per obbligare il riavvio della sequenza corretta
     if os.path.exists(LOG_FILE):
         try: os.remove(LOG_FILE)
         except: pass
@@ -233,8 +224,8 @@ def start(m):
     salva_stato({
         "CAPITALE": 0.0, "SERVER": "", "SIMBOLO": "", "ATTIVO": False, 
         "TRADE_APERTO": False, "DIREZIONE_TRADE": None,
-        "PREZZO_INGRESSO_EUR": 0, "STOP_LOSS_EUR": 0,
-        "TAKE_PROFIT_EUR": 0, "BREAK_EVEN_FATTO": False
+        "PREZZO_INGRESSO_EUR": 0.0, "STOP_LOSS_EUR": 0.0,
+        "TAKE_PROFIT_EUR": 0.0, "BREAK_EVEN_FATTO": False
     })
     bot.reply_to(m, "💰 Ciao! Inserisci il Capitale in Euro per iniziare:")
 
@@ -268,3 +259,11 @@ def handle(m):
         salva_stato(s)
         bot.reply_to(m, f"🚀 Cacciatore attivato su server {s['SERVER']} per l'asset {s['SIMBOLO']}.")
         threading.Thread(target=avvia_scansione, args=(m.chat.id,), daemon=True).start()
+
+if __name__ == "__main__":
+    threading.Thread(target=run_flask, daemon=True).start()
+    try:
+        bot.remove_webhook()
+    except:
+        pass
+    bot.infinity_polling(timeout=10, long_polling_timeout=5)
