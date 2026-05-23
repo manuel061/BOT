@@ -5,7 +5,7 @@ bot = telebot.TeleBot(TOKEN)
 ID_AUTORIZZATI = [5628147908, 987654321] 
 LOG_FILE = "operazioni_log.json"
 
-# --- FUNZIONI DI CALCOLO ---
+# [--- FUNZIONI DI CALCOLO INVARIATE ---]
 def calcola_heikin_ashi(df):
     ha = pd.DataFrame(index=df.index, columns=['open', 'high', 'low', 'close'])
     ha['close'] = (df['open'] + df['high'] + df['low'] + df['close']) / 4
@@ -22,8 +22,7 @@ def calcola_atr(df):
 def salva_stato_utente(uid, s):
     stati = {}
     if os.path.exists(LOG_FILE):
-        try:
-            with open(LOG_FILE, "r") as f: stati = json.load(f)
+        try: with open(LOG_FILE, "r") as f: stati = json.load(f)
         except: pass
     stati[str(uid)] = s
     with open(LOG_FILE, "w") as f: json.dump(stati, f)
@@ -37,59 +36,48 @@ def get_stato_utente(uid):
 
 # --- MOTORE DI SCANSIONE ---
 def avvia_scansione(cid):
+    bot.send_message(cid, "🔍 *Scansione avviata in background...*", parse_mode="Markdown")
     while True:
         s = get_stato_utente(cid)
         if not s.get("ATTIVO"): break
         try:
             fsym, tsym = s['SIMBOLO'].split('-')
-            data = requests.get(f"https://min-api.cryptocompare.com/data/v2/histominute?fsym={fsym}&tsym={tsym}&limit=50", timeout=10).json()["Data"]["Data"]
+            url = f"https://min-api.cryptocompare.com/data/v2/histominute?fsym={fsym}&tsym={tsym}&limit=50"
+            data = requests.get(url, timeout=10).json()["Data"]["Data"]
             df = pd.DataFrame(data)
             ha = calcola_heikin_ashi(df)
-            atr = calcola_atr(df).iloc[-1]
             p = float(df['close'].iloc[-1])
-            sma = df['close'].rolling(20).mean().iloc[-1]
-
-            if s.get("TRADE_APERTO"):
-                diff = s["TAKE_PROFIT"] - s["PREZZO_INGRESSO"]
-                if not s.get("BREAK_EVEN_FATTO") and abs(p - s["PREZZO_INGRESSO"]) >= abs(diff * 0.5):
-                    s["STOP_LOSS"] = s["PREZZO_INGRESSO"]; s["BREAK_EVEN_FATTO"] = True
-                    bot.send_message(cid, "🛡️ *SPOSTA SL A BE*")
-                    salva_stato_utente(cid, s)
-                if (s["DIREZIONE"]=="BUY" and (p>=s["TAKE_PROFIT"] or p<=s["STOP_LOSS"])):
-                    esito = "TP PRESO" if p>=s["TAKE_PROFIT"] else "SL PRESO"
-                    bot.send_message(cid, f"🏁 *TRADE CHIUSO: {esito}*")
-                    s.update({"TRADE_APERTO":False, "BREAK_EVEN_FATTO":False, "ULTIMO_TRADE":time.time()})
-                    salva_stato_utente(cid, s)
             
-            elif not s.get("TRADE_APERTO") and (time.time() - s.get("ULTIMO_TRADE", 0) > 1800):
-                if ha['close'].iloc[-1] > ha['open'].iloc[-1] and p > sma and atr > (p * 0.0001):
-                    sl = round(p - (atr * 2), 2)
-                    tp = round(p + (atr * 3), 2)
-                    lotti_calc = (s["CAPITALE"] * 0.02) / abs(p - sl)
-                    lotti_finali = max(0.01, round(lotti_calc / 1000, 2))
-                    s.update({"TRADE_APERTO":True, "DIREZIONE":"BUY", "PREZZO_INGRESSO":round(p, 2), "STOP_LOSS":sl, "TAKE_PROFIT":tp})
-                    
-                    msg = (f"📊 *BUY {s['SIMBOLO']}*\n🟢 Entrata: {round(p, 2):.2f}\n📉 Lotti: {lotti_finali:.2f}\n🛑 SL: {sl:.2f}\n🎯 TP: {tp:.2f}")
-                    bot.send_message(cid, msg, parse_mode="Markdown")
-                    salva_stato_utente(cid, s)
-        except: pass
-        time.sleep(30)
+            # Print di controllo nel log di Render
+            print(f"Controllo {s['SIMBOLO']}: Prezzo attuale {p}")
 
-# --- MENU COMANDI ---
-@bot.message_handler(commands=['start', 'avvio', 'stop', 'cancella', 'test'])
+            if not s.get("TRADE_APERTO"):
+                # FORZATURA PER VEDERE IL MESSAGGIO:
+                # Se vuoi testare la grafica, cambia 'if False' in 'if True'
+                if False: 
+                    msg = f"📊 *BUY {s['SIMBOLO']} (TEST)*\n🟢 Entrata: {p:.2f}\n🛑 SL: {p-1:.2f}\n🎯 TP: {p+2:.2f}"
+                    bot.send_message(cid, msg, parse_mode="Markdown")
+                    s.update({"TRADE_APERTO":True, "DIREZIONE":"BUY", "PREZZO_INGRESSO":p})
+                    salva_stato_utente(cid, s)
+        except Exception as e: print(f"Errore scansione: {e}")
+        time.sleep(60)
+
+# --- COMANDI ---
+@bot.message_handler(commands=['start', 'avvio', 'stop', 'cancella', 'test', 'test_msg'])
 def cmd(m):
     if m.chat.id not in ID_AUTORIZZATI: return
     c = m.text.split()[0]
     if c == '/start':
-        bot.reply_to(m, "🤖 *BENVENUTO*\nInvia il capitale per iniziare il setup.", parse_mode="Markdown")
-    elif c == '/test': bot.reply_to(m, "✅ Il bot è attivo!")
+        bot.reply_to(m, "🤖 *COMANDI DISPONIBILI:*\n/avvio - Start\n/stop - Stop\n/cancella - Reset\n/test_msg - Test invio segnale")
+    elif c == '/test_msg':
+        bot.reply_to(m, "📊 *BUY TEST-ASSET*\n🟢 Entrata: 100.00\n📉 Lotti: 0.05\n🛑 SL: 99.00\n🎯 TP: 103.00", parse_mode="Markdown")
     elif c == '/avvio':
         s = get_stato_utente(m.chat.id)
         if s["CAPITALE"] > 0 and s["SIMBOLO"] != "":
             s["ATTIVO"] = True; salva_stato_utente(m.chat.id, s)
             bot.reply_to(m, "🚀 *Motore Avviato*")
             threading.Thread(target=avvia_scansione, args=(m.chat.id,), daemon=True).start()
-        else: bot.reply_to(m, "⚠️ Configura prima Capitale e Asset.")
+        else: bot.reply_to(m, "⚠️ Configura Capitale e Asset prima.")
     elif c == '/stop':
         s = get_stato_utente(m.chat.id); s["ATTIVO"] = False; salva_stato_utente(m.chat.id, s)
         bot.reply_to(m, "🔴 *Motore Fermo*")
@@ -101,18 +89,14 @@ def cmd(m):
 def h(m):
     if m.chat.id not in ID_AUTORIZZATI: return
     s = get_stato_utente(m.chat.id)
-    # Flusso guidato
     if s["CAPITALE"] == 0:
         try: s["CAPITALE"] = float(m.text); salva_stato_utente(m.chat.id, s); bot.reply_to(m, "📈 Capitale ok. Inserisci Asset (es: BTC-USD):")
         except: bot.reply_to(m, "⚠️ Inserisci un numero.")
     elif s["SIMBOLO"] == "":
         s["SIMBOLO"] = m.text.upper(); salva_stato_utente(m.chat.id, s)
-        bot.reply_to(m, "✅ DATI ACQUISITI, INIZIO RICERCA OPERAZIONI. Invia /avvio per attivare.")
-    else:
-        bot.reply_to(m, "ℹ️ *Configurazione già presente.*\nUsa /avvio per partire o /cancella per resettare.", parse_mode="Markdown")
+        bot.reply_to(m, "✅ DATI ACQUISITI, INIZIO RICERCA OPERAZIONI.")
 
-# --- AVVIO ROBUSTO ---
 if __name__ == "__main__":
     bot.remove_webhook()
-    print("Bot avviato correttamente...")
-    bot.infinity_polling(none_stop=True, interval=1) 
+    print("Bot pronto.")
+    bot.infinity_polling(none_stop=True)
