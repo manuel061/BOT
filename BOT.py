@@ -52,19 +52,23 @@ def avvia_scansione(cid):
                 if not s.get("BREAK_EVEN_FATTO") and abs(p - s["PREZZO_INGRESSO"]) >= abs(diff * 0.5):
                     s["STOP_LOSS"] = s["PREZZO_INGRESSO"]
                     s["BREAK_EVEN_FATTO"] = True
-                    bot.send_message(cid, "🛡️ *BREAK EVEN ATTIVATO* (SL a ingresso)")
+                    # Messaggio sintetico richiesto
+                    bot.send_message(cid, "🛡️ *SPOSTA SL A BE*")
                     salva_stato_utente(cid, s)
                 
+                # Logica chiusura semplificata
                 if (s["DIREZIONE"]=="BUY" and (p>=s["TAKE_PROFIT"] or p<=s["STOP_LOSS"])) or \
                    (s["DIREZIONE"]=="SELL" and (p<=s["TAKE_PROFIT"] or p>=s["STOP_LOSS"])):
-                    bot.send_message(cid, f"🏁 *TRADE CHIUSO* - Prezzo finale: {p:.2f}")
+                    
+                    esito = "TP PRESO" if (s["DIREZIONE"]=="BUY" and p>=s["TAKE_PROFIT"]) or (s["DIREZIONE"]=="SELL" and p<=s["TAKE_PROFIT"]) else "SL PRESO"
+                    bot.send_message(cid, f"🏁 *TRADE CHIUSO: {esito}*")
+                    
                     s["TRADE_APERTO"] = False
                     s["BREAK_EVEN_FATTO"] = False
-                    s["ULTIMO_TRADE"] = time.time() # Registra orario chiusura
+                    s["ULTIMO_TRADE"] = time.time()
                     salva_stato_utente(cid, s)
 
             # NUOVO SEGNALE SELETTIVO
-            # Verifica: Cooldown 30 min (1800 sec) + Setup tecnico valido + Volatilità minima
             elif not s.get("TRADE_APERTO") and (time.time() - s.get("ULTIMO_TRADE", 0) > 1800):
                 if ha['close'].iloc[-1] > ha['open'].iloc[-1] and p > sma and atr > (p * 0.0001):
                     sl = p - (atr * 2)
