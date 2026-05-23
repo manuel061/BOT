@@ -5,7 +5,7 @@ TOKEN = "8822165462:AAE0bK08EDjW-VBf0H-j_OxV3oBp3KNFmaU"
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-ID_AUTORIZZATI = [123456789, 987654321] # Inserisci qui i vostri ID
+ID_AUTORIZZATI = [5628147908, 987654321] # Inserisci qui i vostri ID
 LOG_FILE = "operazioni_log.json"
 
 # --- LOGICA DI CALCOLO ---
