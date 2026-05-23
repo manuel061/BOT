@@ -9,7 +9,7 @@ import os
 from datetime import datetime
 from flask import Flask
 
-TOKEN = "8822165462:AAHl6DjwPVZSE8G_MxghZF-x5gF1gQ6pAEg"
+TOKEN = "8822165462:AAHh5-XRPEzLyx5WJ1k-HlXUbBU8HRPXbks"
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
