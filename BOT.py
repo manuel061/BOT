@@ -63,20 +63,13 @@ def avvia_scansione(cid):
             
             elif not s.get("TRADE_APERTO") and (time.time() - s.get("ULTIMO_TRADE", 0) > 1800):
                 if ha['close'].iloc[-1] > ha['open'].iloc[-1] and p > sma and atr > (p * 0.0001):
-                    # Calcoli rigorosi a 2 decimali
                     sl = round(p - (atr * 2), 2)
                     tp = round(p + (atr * 3), 2)
                     lotti_calc = (s["CAPITALE"] * 0.02) / abs(p - sl)
                     lotti_finali = max(0.01, round(lotti_calc / 1000, 2))
-                    
                     s.update({"TRADE_APERTO":True, "DIREZIONE":"BUY", "PREZZO_INGRESSO":round(p, 2), "STOP_LOSS":sl, "TAKE_PROFIT":tp})
                     
-                    # Messaggio formattato con 2 decimali fissi
-                    msg = (f"📊 *BUY {s['SIMBOLO']}*\n"
-                           f"🟢 Entrata: {round(p, 2):.2f}\n"
-                           f"📉 Lotti: {lotti_finali:.2f}\n"
-                           f"🛑 SL: {sl:.2f}\n"
-                           f"🎯 TP: {tp:.2f}")
+                    msg = (f"📊 *BUY {s['SIMBOLO']}*\n🟢 Entrata: {round(p, 2):.2f}\n📉 Lotti: {lotti_finali:.2f}\n🛑 SL: {sl:.2f}\n🎯 TP: {tp:.2f}")
                     bot.send_message(cid, msg, parse_mode="Markdown")
                     salva_stato_utente(cid, s)
         except: pass
@@ -88,7 +81,7 @@ def cmd(m):
     if m.chat.id not in ID_AUTORIZZATI: return
     c = m.text.split()[0]
     if c == '/start':
-        bot.reply_to(m, "🤖 *SISTEMA ATTIVO*\n1. Invia il Capitale\n2. Invia l'Asset (es: BTC-USD)\n3. Usa /avvio per iniziare\n\nComandi: /avvio, /stop, /cancella, /test", parse_mode="Markdown")
+        bot.reply_to(m, "🤖 *SISTEMA ATTIVO*\n1. Invia Capitale\n2. Invia Asset (es: BTC-USD)\n3. Usa /avvio per iniziare\n\nComandi: /avvio, /stop, /cancella, /test", parse_mode="Markdown")
     elif c == '/test': bot.reply_to(m, "✅ Il bot è Online!")
     elif c == '/avvio':
         s = get_stato_utente(m.chat.id)
@@ -113,4 +106,6 @@ def h(m):
     elif s["SIMBOLO"] == "":
         s["SIMBOLO"] = m.text.upper(); salva_stato_utente(m.chat.id, s); bot.reply_to(m, "✅ Asset ok. Usa /avvio.")
 
-bot.infinity_polling()
+# --- AVVIO ROBUSTO ---
+bot.remove_webhook()
+bot.infinity_polling(none_stop=True, interval=0)
