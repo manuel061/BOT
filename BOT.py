@@ -9,7 +9,7 @@ import os
 from datetime import datetime
 from flask import Flask
 
-TOKEN = "8822165462:AAHh5-XRPEzLyx5WJ1k-HlXUbBU8HRPXbks"
+TOKEN = "8822165462:AAHl6DjwPVZSE8G_MxghZF-x5gF1gQ6pAEg"
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
@@ -17,24 +17,33 @@ LOG_FILE = "operazioni_log.json"
 
 @app.route('/')
 def home():
-    return "Bot Trader Chirurgico BTC/XAU Attivo!", 200
+    return "Bot Trader Chirurgico Multi-Utente Attivo!", 200
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
-# --- GESTIONE STATO AVANZATA ---
-def salva_stato(s):
-    with open(LOG_FILE, "w") as f: 
-        json.dump(s, f)
-
-def get_stato():
+# --- GESTIONE STATO MULTI-UTENTE ---
+def carica_tutti_stati():
     if os.path.exists(LOG_FILE):
         try:
             with open(LOG_FILE, "r") as f: 
                 return json.load(f)
         except: 
             pass
+    return {}
+
+def salva_stato_utente(user_id, s_utente):
+    stati = carica_tutti_stati()
+    stati[str(user_id)] = s_utente
+    with open(LOG_FILE, "w") as f: 
+        json.dump(stati, f)
+
+def get_stato_utente(user_id):
+    stati = carica_tutti_stati()
+    uid_str = str(user_id)
+    if uid_str in stati:
+        return stati[uid_str]
     return {
         "CAPITALE": 0.0, 
         "SIMBOLO": "", 
@@ -77,14 +86,13 @@ def ottieni_dati_mercato(simbolo):
         print(f"Errore recupero dati per {simbolo}: {e}")
     return None
 
-# --- MOTORE ANALISI ---
+# --- MOTORE ANALISI INDIVIDUALE ---
 def avvia_scansione(chat_id):
-    s = get_stato()
     bot.send_message(chat_id, "🎯 *MOTORE ULTRA-RAPIDO ATTIVATO...*", parse_mode="Markdown")
     ultimo_minuto_segnalato = -1
     
     while True:
-        s = get_stato()
+        s = get_stato_utente(chat_id)
         if not s["ATTIVO"]: 
             break
         
@@ -109,17 +117,17 @@ def avvia_scansione(chat_id):
                         if p_chiusura_confermata >= meta_strada and not s["BREAK_EVEN_FATTO"]:
                             s["STOP_LOSS_EUR"] = s["PREZZO_INGRESSO_EUR"]
                             s["BREAK_EVEN_FATTO"] = True
-                            salva_stato(s)
+                            salva_stato_utente(chat_id, s)
                             bot.send_message(chat_id, "🛡️ *BREAK EVEN CONFERMATO*\nStop Loss spostato a ingresso.", parse_mode="Markdown")
                         
                         elif p_corrente >= s["TAKE_PROFIT_EUR"]:
                             bot.send_message(chat_id, "🎉 *TARGET COLPITO (TAKE PROFIT)!*", parse_mode="Markdown")
                             s["TRADE_APERTO"] = False
-                            salva_stato(s)
+                            salva_stato_utente(chat_id, s)
                         elif p_corrente <= s["STOP_LOSS_EUR"]:
                             bot.send_message(chat_id, "🛑 *STOP LOSS COLPITO.*", parse_mode="Markdown")
                             s["TRADE_APERTO"] = False
-                            salva_stato(s)
+                            salva_stato_utente(chat_id, s)
                             
                     elif s["DIREZIONE_TRADE"] == "SELL":
                         meta_strada = s["PREZZO_INGRESSO_EUR"] - ((s["PREZZO_INGRESSO_EUR"] - s["TAKE_PROFIT_EUR"]) * 0.5)
@@ -127,17 +135,17 @@ def avvia_scansione(chat_id):
                         if p_chiusura_confermata <= meta_strada and not s["BREAK_EVEN_FATTO"]:
                             s["STOP_LOSS_EUR"] = s["PREZZO_INGRESSO_EUR"]
                             s["BREAK_EVEN_FATTO"] = True
-                            salva_stato(s)
+                            salva_stato_utente(chat_id, s)
                             bot.send_message(chat_id, "🛡️ *BREAK EVEN CONFERMATO*\nStop Loss spostato a ingresso.", parse_mode="Markdown")
                         
                         elif p_corrente <= s["TAKE_PROFIT_EUR"]:
                             bot.send_message(chat_id, "🎉 *TARGET COLPITO (TAKE PROFIT)!*", parse_mode="Markdown")
                             s["TRADE_APERTO"] = False
-                            salva_stato(s)
+                            salva_stato_utente(chat_id, s)
                         elif p_corrente >= s["STOP_LOSS_EUR"]:
                             bot.send_message(chat_id, "🛑 *STOP LOSS COLPITO.*", parse_mode="Markdown")
                             s["TRADE_APERTO"] = False
-                            salva_stato(s)
+                            salva_stato_utente(chat_id, s)
                 
                 # ==========================================
                 # GENERAZIONE NUOVO SEGNALE
@@ -191,14 +199,22 @@ def avvia_scansione(chat_id):
                         s["STOP_LOSS_EUR"] = float(sl_clean)
                         s["TAKE_PROFIT_EUR"] = float(tp_clean)
                         s["BREAK_EVEN_FATTO"] = False
-                        salva_stato(s)
+                        salva_stato_utente(chat_id, s)
                         
                         valuta_simbolo = "$" if "USD" in s['SIMBOLO'] else "€"
+                        
+                        # MESSAGGIO DETTAGLIATO CON ETICHETTE TP, SL E LOTTI
                         messaggio_segnale = (
-                            f"*{direzione}* {p_entrata_clean} {valuta_simbolo}\n"
-                            f"{lotti_clean}\n"
-                            f"{sl_clean} {valuta_simbolo}\n"
-                            f"{tp_clean} {valuta_simbolo}"
+                            f"📊 *NUOVO SEGNALE DI TRADING*\n"
+                            f"━━━━━━━━━━━━━━━━━━\n"
+                            f"🔹 *Asset:* {s['SIMBOLO']}\n"
+                            f"📈 *Operazione:* `{direzione}`\n"
+                            f"🟢 *Ingresso:* {p_entrata_clean} {valuta_simbolo}\n"
+                            f"📐 *Lotti Consigliati:* `{lotti_clean}`\n"
+                            f"🛑 *Stop Loss (SL):* {sl_clean} {valuta_simbolo}\n"
+                            f"🎯 *Take Profit (TP):* {tp_clean} {valuta_simbolo}\n"
+                            f"━━━━━━━━━━━━━━━━━━\n"
+                            f"🛡️ _Il bot sposterà automaticamente lo Stop Loss a Break Even a metà strada verso il target._"
                         )
                         bot.send_message(chat_id, messaggio_segnale, parse_mode="Markdown")
                         ultimo_minuto_segnalato = minuto_attuale
@@ -211,11 +227,7 @@ def avvia_scansione(chat_id):
 # --- COMANDI TELEGRAM ---
 @bot.message_handler(commands=['start', 'avvia'])
 def start(m):
-    if os.path.exists(LOG_FILE):
-        try: os.remove(LOG_FILE)
-        except: pass
-        
-    salva_stato({
+    salva_stato_utente(m.chat.id, {
         "CAPITALE": 0.0, "SIMBOLO": "", "ATTIVO": False, 
         "TRADE_APERTO": False, "DIREZIONE_TRADE": None,
         "PREZZO_INGRESSO_EUR": 0.0, "STOP_LOSS_EUR": 0.0,
@@ -225,27 +237,27 @@ def start(m):
 
 @bot.message_handler(func=lambda m: True)
 def handle(m):
-    s = get_stato()
+    s = get_stato_utente(m.chat.id)
     
     if m.text.lower() == "basta":
         s["ATTIVO"] = False
         s["TRADE_APERTO"] = False
-        salva_stato(s)
+        salva_stato_utente(m.chat.id, s)
         bot.reply_to(m, "🛑 Bot fermato e posizioni resettate.")
         return
 
-    # Fase 1: Inserimento Capitale (accetta solo numeri puri)
+    # Fase 1: Inserimento Capitale
     if m.text.replace('.','',1).isdigit() and s["CAPITALE"] == 0:
         s["CAPITALE"] = float(m.text)
-        salva_stato(s)
+        salva_stato_utente(m.chat.id, s)
         bot.reply_to(m, "📈 Perfetto. Ora inserisci l'Asset / Ticker (es: XAU-USD oppure BTC-USD):")
         return
         
-    # Fase 2: Inserimento Asset (Cerca la presenza obbligatoria del trattino)
+    # Fase 2: Inserimento Asset e avvio individuale
     elif "-" in m.text and s["CAPITALE"] > 0 and not s["ATTIVO"]:
         s["SIMBOLO"] = m.text.upper()
         s["ATTIVO"] = True
-        salva_stato(s)
+        salva_stato_utente(m.chat.id, s)
         bot.reply_to(m, f"🚀 Cacciatore attivato per l'asset {s['SIMBOLO']}.")
         threading.Thread(target=avvia_scansione, args=(m.chat.id,), daemon=True).start()
         return
