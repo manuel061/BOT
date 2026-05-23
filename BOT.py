@@ -10,7 +10,8 @@ def calcola_heikin_ashi(df):
     ha = pd.DataFrame(index=df.index, columns=['open', 'high', 'low', 'close'])
     ha['close'] = (df['open'] + df['high'] + df['low'] + df['close']) / 4
     ha.iloc[0,0] = (df['open'].iloc[0] + df['close'].iloc[0]) / 2
-    for i in range(1, len(df)): ha.iloc[i,0] = (ha.iloc[i-1,0] + ha.iloc[i-1,3]) / 2
+    for i in range(1, len(df)): 
+        ha.iloc[i,0] = (ha.iloc[i-1,0] + ha.iloc[i-1,3]) / 2
     ha['high'] = df[['high','open','close']].max(axis=1)
     ha['low'] = df[['low','open','close']].min(axis=1)
     return ha
@@ -44,7 +45,8 @@ def avvia_scansione(cid):
         if not s.get("ATTIVO"): break
         try:
             fsym, tsym = s['SIMBOLO'].split('-')
-            data = requests.get(f"https://min-api.cryptocompare.com/data/v2/histominute?fsym={fsym}&tsym={tsym}&limit=20", timeout=10).json()["Data"]["Data"]
+            url = f"https://min-api.cryptocompare.com/data/v2/histominute?fsym={fsym}&tsym={tsym}&limit=20"
+            data = requests.get(url, timeout=10).json()["Data"]["Data"]
             df = pd.DataFrame(data)
             ha = calcola_heikin_ashi(df)
             p = float(df['close'].iloc[-1])
@@ -66,12 +68,12 @@ def avvia_scansione(cid):
         time.sleep(30)
 
 # --- COMANDI ---
-@bot.message_handler(commands=['start', 'avvio', 'stop', 'cancella', 'test'])
+@bot.message_handler(commands=['start', 'avvio', 'stop', 'cancella', 'reset', 'test'])
 def cmd(m):
     if m.chat.id not in ID_AUTORIZZATI: return
     c = m.text.split()[0]
     if c == '/start':
-        txt = ("🤖 *BENVENUTO*\nComandi: /avvio, /stop, /cancella, /test\n\nPer iniziare, invia il CAPITALE.")
+        txt = ("🤖 *BENVENUTO*\nComandi: /avvio, /stop, /cancella (o /reset), /test\n\nPer iniziare, invia il CAPITALE.")
         bot.reply_to(m, txt, parse_mode="Markdown")
     elif c == '/avvio':
         s = get_stato_utente(m.chat.id)
@@ -81,9 +83,9 @@ def cmd(m):
     elif c == '/stop':
         s = get_stato_utente(m.chat.id); s["ATTIVO"] = False; salva_stato_utente(m.chat.id, s)
         bot.reply_to(m, "🔴 *Motore Fermo*")
-    elif c == '/cancella':
+    elif c == '/cancella' or c == '/reset':
         salva_stato_utente(m.chat.id, {"CAPITALE":0.0, "SIMBOLO":"", "ATTIVO":False})
-        bot.reply_to(m, "🗑️ *Reset Totale eseguito.*")
+        bot.reply_to(m, "🗑️ *Resettato.*")
 
 @bot.message_handler(func=lambda m: True)
 def h(m):
