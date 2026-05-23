@@ -17,13 +17,13 @@ LOG_FILE = "operazioni_log.json"
 
 @app.route('/')
 def home():
-    return "Bot Trader Perfetto con Break Even Attivo!", 200
+    return "Bot Trader Perfetto con Scelta Server Attivo!", 200
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
-# --- GESTIONE STATO AVANZATA (CON LOG DI TRADE) ---
+# --- GESTIONE STATO AVANZATA (CON LOG DI TRADE E SERVER) ---
 def salva_stato(s):
     with open(LOG_FILE, "w") as f: 
         json.dump(s, f)
@@ -35,9 +35,9 @@ def get_stato():
                 return json.load(f)
         except: 
             pass
-    # Stato iniziale sicuro con memoria della posizione attiva
     return {
         "CAPITALE": 0.0, 
+        "SERVER": "",
         "SIMBOLO": "", 
         "ATTIVO": False,
         "TRADE_APERTO": False,
@@ -74,9 +74,10 @@ def ottieni_cambio_eur():
     except:
         return 0.92
 
-# --- MOTORE ANALISI CON BREAK EVEN E LOG ---
+# --- MOTORE ANALISI CON BREAK EVEN MATEMATICO ---
 def avvia_scansione(chat_id):
-    bot.send_message(chat_id, "🎯 *MOTORE ULTRA-RAPIDO CON BREAK-EVEN ATTIVATO...*", parse_mode="Markdown")
+    s = get_stato()
+    bot.send_message(chat_id, f"🎯 *MOTORE ULTRA-RAPIDO ATTIVATO...*\n🌐 Server impostato: *{s['SERVER']}*", parse_mode="Markdown")
     ultimo_minuto_segnalato = -1
     
     while True:
@@ -89,7 +90,6 @@ def avvia_scansione(chat_id):
             minuto_attuale = ora_attuale.minute
             secondo_attuale = ora_attuale.second
             
-            # 1. RECUPERO DATI DI MERCATO (Ogni 5 secondi controlla il prezzo)
             sym = s['SIMBOLO'].split('-')[0]
             url = f"https://min-api.cryptocompare.com/data/v2/histominute?fsym={sym}&tsym=USD&limit=100"
             response = requests.get(url, timeout=5).json()
@@ -97,23 +97,23 @@ def avvia_scansione(chat_id):
             if response.get("Response") == "Success":
                 df_raw = pd.DataFrame(response["Data"]["Data"])
                 usd_to_eur = ottieni_cambio_eur()
+                
                 p_corrente_eur = float(df_raw['close'].iloc[-1]) * usd_to_eur
+                p_chiusura_confermata_eur = float(df_raw['close'].iloc[-2]) * usd_to_eur
                 
                 # ==========================================
-                # LOGICA DI GESTIONE TRADE APERTO (BREAK EVEN / USCITE)
+                # LOGICA DI GESTIONE TRADE APERTO
                 # ==========================================
                 if s["TRADE_APERTO"]:
-                    # Se siamo in BUY
                     if s["DIREZIONE_TRADE"] == "BUY":
-                        # Controllo Break Even: se il prezzo ha fatto metà strada verso il TP, sposta lo SL a target di ingresso
                         meta_strada = s["PREZZO_INGRESSO_EUR"] + ((s["TAKE_PROFIT_EUR"] - s["PREZZO_INGRESSO_EUR"]) * 0.5)
-                        if p_corrente_eur >= meta_strada and not s["BREAK_EVEN_FATTO"]:
+                        
+                        if p_chiusura_confermata_eur >= meta_strada and not s["BREAK_EVEN_FATTO"]:
                             s["STOP_LOSS_EUR"] = s["PREZZO_INGRESSO_EUR"]
                             s["BREAK_EVEN_FATTO"] = True
                             salva_stato(s)
-                            bot.send_message(chat_id, f"🛡️ *BREAK EVEN ATTIVATO* | {sym}-EUR\nPrezzo a metà strada. Lo Stop Loss è stato spostato a prezzo d'ingresso ({s['STOP_LOSS_EUR']:.2f} €). Rischio Azzerato!", parse_mode="Markdown")
+                            bot.send_message(chat_id, f"🛡️ *BREAK EVEN MATEMATICO CONFERMATO* | {sym}-EUR\nLa candela ha chiuso sopra il livello di sicurezza. Lo Stop Loss è stato ufficialmente spostato a prezzo d'ingresso ({s['STOP_LOSS_EUR']:.2f} €). Rischio Azzerato!", parse_mode="Markdown")
                         
-                        # Controllo se ha colpito TP o SL (Simulazione chiusura)
                         elif p_corrente_eur >= s["TAKE_PROFIT_EUR"]:
                             bot.send_message(chat_id, f"🎉 *TARGET COLPITO (TAKE PROFIT)!* | +{(s['CAPITALE']*0.02*1.5):.2f} €", parse_mode="Markdown")
                             s["TRADE_APERTO"] = False
@@ -124,14 +124,14 @@ def avvia_scansione(chat_id):
                             s["TRADE_APERTO"] = False
                             salva_stato(s)
                             
-                    # Se siamo in SELL
                     elif s["DIREZIONE_TRADE"] == "SELL":
                         meta_strada = s["PREZZO_INGRESSO_EUR"] - ((s["PREZZO_INGRESSO_EUR"] - s["TAKE_PROFIT_EUR"]) * 0.5)
-                        if p_corrente_eur <= meta_strada and not s["BREAK_EVEN_FATTO"]:
+                        
+                        if p_chiusura_confermata_eur <= meta_strada and not s["BREAK_EVEN_FATTO"]:
                             s["STOP_LOSS_EUR"] = s["PREZZO_INGRESSO_EUR"]
                             s["BREAK_EVEN_FATTO"] = True
                             salva_stato(s)
-                            bot.send_message(chat_id, f"🛡️ *BREAK EVEN ATTIVATO* | {sym}-EUR\nLo Stop Loss è stato spostato a prezzo d'ingresso ({s['STOP_LOSS_EUR']:.2f} €). Rischio Azzerato!", parse_mode="Markdown")
+                            bot.send_message(chat_id, f"🛡️ *BREAK EVEN MATEMATICO CONFERMATO* | {sym}-EUR\nLa candela ha chiuso sotto il livello di sicurezza. Lo Stop Loss è stato ufficialmente spostato a prezzo d'ingresso ({s['STOP_LOSS_EUR']:.2f} €). Rischio Azzerato!", parse_mode="Markdown")
                         
                         elif p_corrente_eur <= s["TAKE_PROFIT_EUR"]:
                             bot.send_message(chat_id, f"🎉 *TARGET COLPITO (TAKE PROFIT)!* | +{(s['CAPITALE']*0.02*1.5):.2f} €", parse_mode="Markdown")
@@ -144,7 +144,7 @@ def avvia_scansione(chat_id):
                             salva_stato(s)
                 
                 # ==========================================
-                # LOGICA DI GENERAZIONE NUOVO SEGNALE (A CHIUSURA CANDELA)
+                # LOGICA DI GENERAZIONE NUOVO SEGNALE
                 # ==========================================
                 if secondo_attuale <= 5 and minuto_attuale != ultimo_minuto_segnalato and not s["TRADE_APERTO"]:
                     df_ha = calcola_heikin_ashi(df_raw)
@@ -187,7 +187,6 @@ def avvia_scansione(chat_id):
                             lotti = 0.0
                             guadagno_stimato = 0.0
                         
-                        # AGGIORNA IL FILE DI LOG CON IL NUOVO TRADE ATTIVO
                         s["TRADE_APERTO"] = True
                         s["DIREZIONE_TRADE"] = direzione
                         s["PREZZO_INGRESSO_EUR"] = p_chiusura_eur
@@ -198,6 +197,7 @@ def avvia_scansione(chat_id):
                         
                         messaggio_segnale = (
                             f"🚨 *SEGNALE DI TRADING* | {sym}-EUR\n"
+                            f"🌐 *Exchange Server:* {s['SERVER']}\n"
                             f"🟢 *OPERAZIONE:* {direzione}\n"
                             f"🪙 *Lotti (Size):* {lotti:.5f} {sym}\n\n"
                             f"⏱️ *Tempistica:* ENTRA ADESSO (Candela Confermata)\n"
@@ -205,21 +205,21 @@ def avvia_scansione(chat_id):
                             f"🛑 *Stop Loss:* {stop_loss:.2f} €\n"
                             f"🎯 *Take Profit:* {take_profit:.2f} €\n\n"
                             f"💰 *Guadagno Stimato:* +{guadagno_stimato:.2f} €\n"
-                            f"🛡️ _Break Even automatico attivo al 50% del target_"
+                            f"🛡️ _Break Even matematico attivo a chiusura candela_"
                         )
                         bot.send_message(chat_id, messaggio_segnale, parse_mode="Markdown")
                         ultimo_minuto_segnalato = minuto_attuale
                         
         except Exception as e:
-            print(f"Errore: {e}")
+            print(f"Errore scansione: {e}")
             
         time.sleep(5)
 
-# --- COMANDI TELEGRAM ---
+# --- COMANDI TELEGRAM CON NUOVA SEQUENZA ---
 @bot.message_handler(commands=['start', 'avvia'])
 def start(m):
     salva_stato({
-        "CAPITALE": 0.0, "SIMBOLO": "", "ATTIVO": False, 
+        "CAPITALE": 0.0, "SERVER": "", "SIMBOLO": "", "ATTIVO": False, 
         "TRADE_APERTO": False, "DIREZIONE_TRADE": None,
         "PREZZO_INGRESSO_EUR": 0.0, "STOP_LOSS_EUR": 0.0,
         "TAKE_PROFIT_EUR": 0.0, "BREAK_EVEN_FATTO": False
@@ -229,16 +229,27 @@ def start(m):
 @bot.message_handler(func=lambda m: True)
 def handle(m):
     s = get_stato()
+    
+    # Fase 1: Inserimento Capitale
     if m.text.replace('.','',1).isdigit() and s["CAPITALE"] == 0:
         s["CAPITALE"] = float(m.text)
         salva_stato(s)
-        bot.reply_to(m, "📈 Perfetto. Ora inserisci il Ticker (es: BTC-USD):")
-    elif "-" in m.text and s["CAPITALE"] > 0 and not s["ATTIVO"]:
+        bot.reply_to(m, "🖥️ In quale server/exchange operi? (es: Binance, Bybit, Coinbase):")
+        
+    # Fase 2: Inserimento Server (Accetta testo se il capitale è impostato ma il server è vuoto)
+    elif s["CAPITALE"] > 0 and s["SERVER"] == "":
+        s["SERVER"] = m.text.upper()
+        salva_stato(s)
+        bot.reply_to(m, "📈 Perfetto. Ora inserisci l'Asset / Ticker (es: BTC-USD):")
+        
+    # Fase 3: Inserimento Asset e avvio
+    elif "-" in m.text and s["CAPITALE"] > 0 and s["SERVER"] != "" and not s["ATTIVO"]:
         s["SIMBOLO"] = m.text.upper()
         s["ATTIVO"] = True
         salva_stato(s)
-        bot.reply_to(m, f"🚀 Cacciatore attivato su {s['SIMBOLO']}. Log e Break-Even attivi.")
+        bot.reply_to(m, f"🚀 Cacciatore attivato su server {s['SERVER']} per l'asset {s['SIMBOLO']}.")
         threading.Thread(target=avvia_scansione, args=(m.chat.id,), daemon=True).start()
+        
     elif m.text.lower() == "basta":
         s["ATTIVO"] = False
         s["TRADE_APERTO"] = False
