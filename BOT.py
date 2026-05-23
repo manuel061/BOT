@@ -17,8 +17,11 @@ def calcola_heikin_ashi(df):
 
 def get_stato_utente(uid):
     if os.path.exists(LOG_FILE):
-        try: with open(LOG_FILE, "r") as f: return json.load(f).get(str(uid), {"CAPITALE":0.0, "SIMBOLO":"", "ATTIVO":False})
-        except: pass
+        try: 
+            with open(LOG_FILE, "r") as f: 
+                return json.load(f).get(str(uid), {"CAPITALE":0.0, "SIMBOLO":"", "ATTIVO":False})
+        except: 
+            pass
     return {"CAPITALE":0.0, "SIMBOLO":"", "ATTIVO":False}
 
 def salva_stato_utente(uid, s):
