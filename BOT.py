@@ -104,7 +104,9 @@ def h(m):
         try: s["CAPITALE"] = float(m.text); salva_stato_utente(m.chat.id, s); bot.reply_to(m, "📈 Capitale ok. Inserisci Asset (es: BTC-USD):")
         except: bot.reply_to(m, "⚠️ Inserisci un numero.")
     elif s["SIMBOLO"] == "":
-        s["SIMBOLO"] = m.text.upper(); salva_stato_utente(m.chat.id, s); bot.reply_to(m, "✅ Asset ok. Usa /avvio.")
+        s["SIMBOLO"] = m.text.upper(); salva_stato_utente(m.chat.id, s)
+        # --- MESSAGGIO RICHIESTO ---
+        bot.reply_to(m, "✅ DATI ACQUISITI, INIZIO RICERCA OPERAZIONI.")
 
 # --- AVVIO ROBUSTO ---
 bot.remove_webhook()
