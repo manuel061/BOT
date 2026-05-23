@@ -179,12 +179,10 @@ def avvia_scansione(chat_id):
                         else:
                             lotti = 0.0
                         
-                        # ARROTONDAMENTO MASSIMO 2 DECIMALI CON RACCOGLIMENTO MATEMATICO
                         p_entrata_clean = int(p_chiusura) if p_chiusura.is_integer() else round(p_chiusura, 2)
                         sl_clean = int(stop_loss) if stop_loss.is_integer() else round(stop_loss, 2)
                         tp_clean = int(take_profit) if take_profit.is_integer() else round(take_profit, 2)
                         
-                        # Gestione lotti MT4 (standardizzati a 2 decimali, es: 0.15 o 1.20 lotti)
                         lotti_clean = round(lotti / 1000, 2) if round(lotti / 1000, 2) > 0.01 else 0.01
 
                         s["TRADE_APERTO"] = True
@@ -195,7 +193,6 @@ def avvia_scansione(chat_id):
                         s["BREAK_EVEN_FATTO"] = False
                         salva_stato(s)
                         
-                        # INTERFACCIA VALORI PURI RICHIESTA
                         valuta_simbolo = "$" if "USD" in s['SIMBOLO'] else "€"
                         messaggio_segnale = (
                             f"*{direzione}* {p_entrata_clean} {valuta_simbolo}\n"
@@ -237,19 +234,21 @@ def handle(m):
         bot.reply_to(m, "🛑 Bot fermato e posizioni resettate.")
         return
 
-    # Fase 1: Inserimento Capitale
+    # Fase 1: Inserimento Capitale (accetta solo numeri puri)
     if m.text.replace('.','',1).isdigit() and s["CAPITALE"] == 0:
         s["CAPITALE"] = float(m.text)
         salva_stato(s)
         bot.reply_to(m, "📈 Perfetto. Ora inserisci l'Asset / Ticker (es: XAU-USD oppure BTC-USD):")
+        return
         
-    # Fase 2: Inserimento Asset e avvio immediato
+    # Fase 2: Inserimento Asset (Cerca la presenza obbligatoria del trattino)
     elif "-" in m.text and s["CAPITALE"] > 0 and not s["ATTIVO"]:
         s["SIMBOLO"] = m.text.upper()
         s["ATTIVO"] = True
         salva_stato(s)
         bot.reply_to(m, f"🚀 Cacciatore attivato per l'asset {s['SIMBOLO']}.")
         threading.Thread(target=avvia_scansione, args=(m.chat.id,), daemon=True).start()
+        return
 
 if __name__ == "__main__":
     threading.Thread(target=run_flask, daemon=True).start()
