@@ -81,14 +81,15 @@ def cmd(m):
     if m.chat.id not in ID_AUTORIZZATI: return
     c = m.text.split()[0]
     if c == '/start':
-        bot.reply_to(m, "🤖 *SISTEMA ATTIVO*\n1. Invia Capitale\n2. Invia Asset (es: BTC-USD)\n3. Usa /avvio per iniziare\n\nComandi: /avvio, /stop, /cancella, /test", parse_mode="Markdown")
-    elif c == '/test': bot.reply_to(m, "✅ Il bot è Online!")
+        bot.reply_to(m, "🤖 *BENVENUTO*\nInvia il capitale per iniziare il setup.", parse_mode="Markdown")
+    elif c == '/test': bot.reply_to(m, "✅ Il bot è attivo!")
     elif c == '/avvio':
         s = get_stato_utente(m.chat.id)
         if s["CAPITALE"] > 0 and s["SIMBOLO"] != "":
             s["ATTIVO"] = True; salva_stato_utente(m.chat.id, s)
             bot.reply_to(m, "🚀 *Motore Avviato*")
             threading.Thread(target=avvia_scansione, args=(m.chat.id,), daemon=True).start()
+        else: bot.reply_to(m, "⚠️ Configura prima Capitale e Asset.")
     elif c == '/stop':
         s = get_stato_utente(m.chat.id); s["ATTIVO"] = False; salva_stato_utente(m.chat.id, s)
         bot.reply_to(m, "🔴 *Motore Fermo*")
@@ -100,14 +101,18 @@ def cmd(m):
 def h(m):
     if m.chat.id not in ID_AUTORIZZATI: return
     s = get_stato_utente(m.chat.id)
+    # Flusso guidato
     if s["CAPITALE"] == 0:
         try: s["CAPITALE"] = float(m.text); salva_stato_utente(m.chat.id, s); bot.reply_to(m, "📈 Capitale ok. Inserisci Asset (es: BTC-USD):")
         except: bot.reply_to(m, "⚠️ Inserisci un numero.")
     elif s["SIMBOLO"] == "":
         s["SIMBOLO"] = m.text.upper(); salva_stato_utente(m.chat.id, s)
-        # --- MESSAGGIO RICHIESTO ---
-        bot.reply_to(m, "✅ DATI ACQUISITI, INIZIO RICERCA OPERAZIONI.")
+        bot.reply_to(m, "✅ DATI ACQUISITI, INIZIO RICERCA OPERAZIONI. Invia /avvio per attivare.")
+    else:
+        bot.reply_to(m, "ℹ️ *Configurazione già presente.*\nUsa /avvio per partire o /cancella per resettare.", parse_mode="Markdown")
 
 # --- AVVIO ROBUSTO ---
-bot.remove_webhook()
-bot.infinity_polling(none_stop=True, interval=0)
+if __name__ == "__main__":
+    bot.remove_webhook()
+    print("Bot avviato correttamente...")
+    bot.infinity_polling(none_stop=True, interval=1)
