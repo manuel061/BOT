@@ -89,6 +89,13 @@ if __name__ == "__main__":
     # Avvia il server web in background per Render
     threading.Thread(target=run_flask, daemon=True).start()
     
+    # Rimuove il vecchio webhook per risolvere il conflitto 409
+    try:
+        bot.remove_webhook()
+        print("Vecchio Webhook rimosso con successo.")
+    except Exception as e:
+        print(f"Errore durante la rimozione del webhook: {e}")
+    
     # Avvia il bot di Telegram
     print("Bot in ascolto...")
     bot.infinity_polling(timeout=10, long_polling_timeout=5)
