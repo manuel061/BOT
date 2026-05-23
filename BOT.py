@@ -32,7 +32,7 @@ def get_stato_utente(uid):
         except: pass
     return {"CAPITALE":0.0, "SIMBOLO":"", "ATTIVO":False, "TRADE_APERTO":False}
 
-# --- MOTORE DI SCANSIONE COMPLETO ---
+# --- MOTORE DI SCANSIONE CON LOTTI CORRETTI ---
 def avvia_scansione(cid):
     while True:
         s = get_stato_utente(cid)
@@ -46,7 +46,6 @@ def avvia_scansione(cid):
             p = float(df['close'].iloc[-1])
             sma = df['close'].rolling(20).mean().iloc[-1]
 
-            # GESTIONE TRADE APERTO
             if s.get("TRADE_APERTO"):
                 diff = s["TAKE_PROFIT"] - s["PREZZO_INGRESSO"]
                 if not s.get("BREAK_EVEN_FATTO") and abs(p - s["PREZZO_INGRESSO"]) >= abs(diff * 0.5):
@@ -62,13 +61,15 @@ def avvia_scansione(cid):
                     s["BREAK_EVEN_FATTO"] = False
                     salva_stato_utente(cid, s)
 
-            # NUOVO SEGNALE
             elif ha['close'].iloc[-1] > ha['open'].iloc[-1] and p > sma:
                 sl = p - (atr * 2)
                 tp = p + (atr * 3)
-                lotti = (s["CAPITALE"] * 0.02) / abs(p - sl)
+                # CALCOLO LOTTI CORRETTO CON MINIMO 0.01
+                lotti_calcolati = (s["CAPITALE"] * 0.02) / abs(p - sl)
+                lotti_finali = max(0.01, round(lotti_calcolati / 1000, 2))
+                
                 s.update({"TRADE_APERTO":True, "DIREZIONE":"BUY", "PREZZO_INGRESSO":p, "STOP_LOSS":sl, "TAKE_PROFIT":tp})
-                bot.send_message(cid, f"📊 *BUY {s['SIMBOLO']}*\n🟢 Entrata: {p:.2f}\n📉 Lotti: {lotti/1000:.2f}\n🛑 SL: {sl:.2f}\n🎯 TP: {tp:.2f}\n💰 Profitto stimato: {((tp-p)*(lotti/1000)):.2f}", parse_mode="Markdown")
+                bot.send_message(cid, f"📊 *BUY {s['SIMBOLO']}*\n🟢 Entrata: {p:.2f}\n📉 Lotti: {lotti_finali:.2f}\n🛑 SL: {sl:.2f}\n🎯 TP: {tp:.2f}\n💰 Profitto stimato: {((tp-p)*(lotti_finali*1000)):.2f}", parse_mode="Markdown")
                 salva_stato_utente(cid, s)
         except: pass
         time.sleep(30)
