@@ -115,4 +115,4 @@ def h(m):
 if __name__ == "__main__":
     bot.remove_webhook()
     print("Bot avviato correttamente...")
-    bot.infinity_polling(none_stop=True, interval=1)
+    bot.infinity_polling(none_stop=True, interval=1) 
