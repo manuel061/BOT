@@ -27,10 +27,14 @@ def get_stato_utente(uid):
 def salva_stato_utente(uid, s):
     stati = {}
     if os.path.exists(LOG_FILE):
-        try: with open(LOG_FILE, "r") as f: stati = json.load(f)
-        except: pass
+        try: 
+            with open(LOG_FILE, "r") as f: 
+                stati = json.load(f)
+        except: 
+            pass
     stati[str(uid)] = s
-    with open(LOG_FILE, "w") as f: json.dump(stati, f)
+    with open(LOG_FILE, "w") as f: 
+        json.dump(stati, f)
 
 # --- MOTORE DI SCANSIONE ---
 def avvia_scansione(cid):
@@ -45,21 +49,20 @@ def avvia_scansione(cid):
             ha = calcola_heikin_ashi(df)
             p = float(df['close'].iloc[-1])
             
-            # LOGICA: Trend rialzista (BUY)
             if ha['close'].iloc[-1] > ha['open'].iloc[-1]:
                 sl = round(p * 0.99, 2)
                 tp = round(p * 1.02, 2)
                 lotti = max(0.01, round((s["CAPITALE"] * 0.02) / 100, 2))
                 
-                # MESSAGGIO RICHIESTO (SOLO DATI)
                 msg = (f"📈 *BUY*\n"
                        f"Entrata: {p:.2f}\n"
                        f"Lotti: {lotti:.2f}\n"
                        f"SL: {sl:.2f}\n"
                        f"TP: {tp:.2f}")
                 bot.send_message(cid, msg, parse_mode="Markdown")
-                time.sleep(300) # Attesa per non inondare di messaggi
-        except: pass
+                time.sleep(300)
+        except: 
+            pass
         time.sleep(30)
 
 # --- COMANDI ---
@@ -68,13 +71,7 @@ def cmd(m):
     if m.chat.id not in ID_AUTORIZZATI: return
     c = m.text.split()[0]
     if c == '/start':
-        txt = ("🤖 *BENVENUTO*\n"
-               "Comandi disponibili:\n"
-               "/avvio - Inizia scansione\n"
-               "/stop - Ferma scansione\n"
-               "/cancella - Reset impostazioni\n"
-               "/test - Verifica connessione\n\n"
-               "Per favore, invia il CAPITALE (es: 1000)")
+        txt = ("🤖 *BENVENUTO*\nComandi: /avvio, /stop, /cancella, /test\n\nPer iniziare, invia il CAPITALE.")
         bot.reply_to(m, txt, parse_mode="Markdown")
     elif c == '/avvio':
         s = get_stato_utente(m.chat.id)
@@ -96,12 +93,12 @@ def h(m):
         try: 
             s["CAPITALE"] = float(m.text)
             salva_stato_utente(m.chat.id, s)
-            bot.reply_to(m, "✅ Capitale impostato. Ora invia l'ASSET (es: BTC-USD):")
-        except: bot.reply_to(m, "⚠️ Inserisci un valore numerico per il capitale.")
+            bot.reply_to(m, "✅ Capitale ricevuto. Ora invia l'ASSET (es: BTC-USD):")
+        except: bot.reply_to(m, "⚠️ Inserisci un valore numerico.")
     elif s["SIMBOLO"] == "":
         s["SIMBOLO"] = m.text.upper()
         salva_stato_utente(m.chat.id, s)
-        bot.reply_to(m, "✅ Asset acquisito. Digita /avvio per iniziare.")
+        bot.reply_to(m, "✅ Asset acquisito. Invia /avvio per iniziare.")
 
 if __name__ == "__main__":
     bot.remove_webhook()
