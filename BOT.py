@@ -37,30 +37,25 @@ def get_stato_utente(uid):
     except: return {"cid": uid, "capitale": 0.0, "simbolo": "", "attivo": 0}
 
 def verifica_asset(simbolo):
-    # 1. Pulisce completamente l'input
     raw = "".join(filter(str.isalnum, simbolo)).upper()
-    print(f"DEBUG: Tenta validazione per: {raw}")
+    # Aggiungiamo headers per sembrare un vero browser
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     
-    # 2. Proviamo le combinazioni standard (aumentate per sicurezza)
-    varianti = [raw, raw + "USDT", raw + "USD", raw + "BTC", raw + "ETH"]
-    
-    for s in varianti:
+    for s in [raw, raw + "USDT"]:
         try:
-            # Aggiungiamo un controllo di timeout più lungo
-            r = requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={s}", timeout=10)
+            url = f"https://api.binance.com/api/v3/ticker/price?symbol={s}"
+            r = requests.get(url, headers=headers, timeout=5)
             
-            # Se la risposta è 200, l'asset esiste su Binance
+            print(f"DEBUG: Tentativo per {s} -> Stato: {r.status_code}")
+            
             if r.status_code == 200:
-                print(f"DEBUG: Trovato asset valido su Binance: {s}")
                 return s
             else:
-                print(f"DEBUG: {s} non trovato (Codice {r.status_code})")
+                print(f"DEBUG: Binance ha risposto con: {r.text}")
         except Exception as e:
-            print(f"DEBUG: Errore di connessione con {s}: {e}")
-            continue # Passa alla variante successiva senza bloccare
+            print(f"DEBUG: Connessione fallita per {s}. Errore: {e}")
             
     return None
-
 # --- MONITORAGGIO E SCANSIONE ---
 def monitora_tp_sl():
     while True:
