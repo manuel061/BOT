@@ -81,12 +81,30 @@ def avvia_scansione(cid):
             rsi = (100 - (100 / (1 + rs))).iloc[-1]
             sma = df['close'].rolling(20).mean().iloc[-1]
             tipo = "BUY" if (p > sma and rsi < 70) else ("SELL" if (p < sma and rsi > 30) else None)
+            
             if tipo:
+                rischio_valore = s["CAPITALE"] * 0.02
+                lotto = rischio_valore / (p * 0.01)
                 tp, sl = (p*1.02, p*0.99) if tipo == "BUY" else (p*0.98, p*1.01)
+                
                 conn = get_db(); cursor = conn.cursor()
                 cursor.execute("INSERT INTO operazioni (cid, tipo, entrata, tp, sl, simbolo) VALUES (%s, %s, %s, %s, %s, %s)", (cid, tipo, p, tp, sl, fsym+tsym))
                 conn.commit(); conn.close()
-                bot.send_message(cid, f"{'🟢' if tipo=='BUY' else '🔴'} *SEGNALE {tipo}* ({fsym+tsym}) inserito.")
+                
+                trend = "Rialzista (Prezzo > Media)" if p > sma else "Ribassista (Prezzo < Media)"
+                forza = "Ipervenduto" if rsi < 30 else ("Ipercomprato" if rsi > 70 else "Neutrale")
+                
+                msg = (
+                    f"✨ **SEGNALE OPERATIVO {tipo}** ✨\n\n"
+                    f"🔹 **Asset:** `{fsym+tsym}`\n"
+                    f"💰 **Prezzo Entrata:** `{p:.4f}`\n"
+                    f"🔢 **Lotti Suggeriti:** `{lotto:.4f}`\n"
+                    f"🎯 **Target Profit:** `{tp:.4f}`\n"
+                    f"🛑 **Stop Loss:** `{sl:.4f}`\n\n"
+                    f"📊 *Analisi:* Trend {trend}. Mercato {forza}.\n\n"
+                    f"🚀 *Monitoraggio H24 attivo.*"
+                )
+                bot.send_message(cid, msg, parse_mode="Markdown")
                 time.sleep(300)
         except: pass
         time.sleep(60)
