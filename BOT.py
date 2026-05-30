@@ -74,13 +74,12 @@ def calcola_heikin_ashi(df):
 
 def avvia_scansione(cid):
     s = get_stato_utente(cid)
-    # Validazione e Reset Automatico
     try:
         fsym, tsym = s['SIMBOLO'].split('-')
         test = requests.get(f"https://min-api.cryptocompare.com/data/price?fsym={fsym}&tsym={tsym}", timeout=5).json()
         if "Response" in test and test["Response"] == "Error": raise Exception()
     except:
-        bot.send_message(cid, "❌ *Asset non valido o mercato chiuso. Reset database in corso...*")
+        bot.send_message(cid, "❌ *Asset non valido o mercato chiuso.*\n\n🔄 *Per favore, invia il nuovo ASSET (es: BTC-USD) e poi /avvio.*")
         s["SIMBOLO"] = ""; s["ATTIVO"] = False; salva_stato_utente(cid, s); return
 
     bot.send_message(cid, "🔍 *RICERCA OPERAZIONI ATTIVA*", parse_mode="Markdown")
@@ -106,7 +105,7 @@ def avvia_scansione(cid):
                 bot.send_message(cid, f"{'🟢' if tipo=='BUY' else '🔴'} *SEGNALE {tipo}*\n💰 *Asset:* `{s['SIMBOLO']}`\n💵 *Entrata:* `{p:.2f}`\n🎯 *TP:* `{tp:.2f}`\n🛡️ *SL:* `{sl:.2f}`", parse_mode="Markdown")
                 time.sleep(300)
         except: 
-            bot.send_message(cid, "⚠️ *Mercato interrotto. Reset in corso...*")
+            bot.send_message(cid, "⚠️ *Mercato interrotto. Reinvia l'ASSET e /avvio per ripartire.*")
             s["SIMBOLO"] = ""; s["ATTIVO"] = False; salva_stato_utente(cid, s); break
         time.sleep(30)
 
@@ -121,7 +120,7 @@ def cmd(m):
         if s["CAPITALE"] > 0 and s["SIMBOLO"]:
             s["ATTIVO"] = True; salva_stato_utente(m.chat.id, s)
             threading.Thread(target=avvia_scansione, args=(m.chat.id,), daemon=True).start()
-        else: bot.reply_to(m, "⚠️ Configurazione incompleta.")
+        else: bot.reply_to(m, "⚠️ Configurazione incompleta. Assicurati di aver inviato CAPITALE e ASSET.")
     elif c == '/stop':
         s = get_stato_utente(m.chat.id); s["ATTIVO"] = False; salva_stato_utente(m.chat.id, s); bot.reply_to(m, "🔴 *Motore Fermo*")
     elif c in ['/cancella', '/reset']:
@@ -133,7 +132,7 @@ def h(m):
     s = get_stato_utente(m.chat.id)
     if s["CAPITALE"] <= 0:
         try: s["CAPITALE"] = float(m.text.replace(',', '.')); salva_stato_utente(m.chat.id, s); bot.reply_to(m, "✅ Capitale preso. Invia ASSET:")
-        except: bot.reply_to(m, "⚠️ Invia un numero.")
+        except: bot.reply_to(m, "⚠️ Invia un numero valido per il capitale.")
     elif s["SIMBOLO"] == "":
         s["SIMBOLO"] = m.text.strip().upper(); salva_stato_utente(m.chat.id, s); bot.reply_to(m, f"✅ `{s['SIMBOLO']}` salvato. Invia /avvio.")
     else: bot.reply_to(m, "ℹ️ Configurazione ok. Invia /avvio.")
