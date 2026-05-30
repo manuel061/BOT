@@ -36,15 +36,29 @@ def get_stato_utente(uid):
         return res if res else {"cid": uid, "capitale": 0.0, "simbolo": "", "attivo": 0}
     except: return {"cid": uid, "capitale": 0.0, "simbolo": "", "attivo": 0}
 
-# --- LOGICA ASSET POTENZIATA ---
 def verifica_asset(simbolo):
-    # Pulisce l'input: trasforma "BTC-USD" o "BTC/USD" in "BTCUSDT" o "BTCUSD"
-    pulito = "".join(filter(str.isalnum, simbolo)).upper()
-    for s in [pulito, pulito + "USDT", pulito + "USD"]:
+    # 1. Pulisce completamente l'input
+    raw = "".join(filter(str.isalnum, simbolo)).upper()
+    print(f"DEBUG: Tenta validazione per: {raw}")
+    
+    # 2. Proviamo le combinazioni standard (aumentate per sicurezza)
+    varianti = [raw, raw + "USDT", raw + "USD", raw + "BTC", raw + "ETH"]
+    
+    for s in varianti:
         try:
-            r = requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={s}", timeout=5)
-            if r.status_code == 200: return s
-        except: continue
+            # Aggiungiamo un controllo di timeout più lungo
+            r = requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={s}", timeout=10)
+            
+            # Se la risposta è 200, l'asset esiste su Binance
+            if r.status_code == 200:
+                print(f"DEBUG: Trovato asset valido su Binance: {s}")
+                return s
+            else:
+                print(f"DEBUG: {s} non trovato (Codice {r.status_code})")
+        except Exception as e:
+            print(f"DEBUG: Errore di connessione con {s}: {e}")
+            continue # Passa alla variante successiva senza bloccare
+            
     return None
 
 # --- MONITORAGGIO E SCANSIONE ---
