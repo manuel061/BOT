@@ -1,7 +1,8 @@
 import telebot, requests, pandas as pd, numpy as np, time, threading, json, os
 from flask import Flask
 
-TOKEN = "8822165462:AAE0bK08EDjW-VBf0H-j_OxV3oBp3KNFmaU"
+# Usa la variabile d'ambiente per il token
+TOKEN = os.environ.get("TOKEN")
 bot = telebot.TeleBot(TOKEN)
 ID_AUTORIZZATI = [5628147908, 987654321] 
 LOG_FILE = "operazioni_log.json"
@@ -22,60 +23,62 @@ def get_stato_utente(uid):
         try: 
             with open(LOG_FILE, "r") as f: 
                 return json.load(f).get(str(uid), {"CAPITALE":0.0, "SIMBOLO":"", "ATTIVO":False})
-        except: 
-            pass
+        except: pass
     return {"CAPITALE":0.0, "SIMBOLO":"", "ATTIVO":False}
 
 def salva_stato_utente(uid, s):
     stati = {}
     if os.path.exists(LOG_FILE):
         try: 
-            with open(LOG_FILE, "r") as f: 
-                stati = json.load(f)
-        except: 
-            pass
+            with open(LOG_FILE, "r") as f: stati = json.load(f)
+        except: pass
     stati[str(uid)] = s
-    with open(LOG_FILE, "w") as f: 
-        json.dump(stati, f)
+    with open(LOG_FILE, "w") as f: json.dump(stati, f)
 
 # --- MOTORE DI SCANSIONE ---
 def avvia_scansione(cid):
-    bot.send_message(cid, "🔍 *RICERCA OPERAZIONI IN CORSO...*", parse_mode="Markdown")
+    bot.send_message(cid, "🔍 *RICERCA OPERAZIONI BUY/SELL (FILTRO SMA20) ATTIVA...*", parse_mode="Markdown")
     while True:
         s = get_stato_utente(cid)
         if not s.get("ATTIVO"): break
         try:
             fsym, tsym = s['SIMBOLO'].split('-')
-            url = f"https://min-api.cryptocompare.com/data/v2/histominute?fsym={fsym}&tsym={tsym}&limit=20"
-            data = requests.get(url, timeout=10).json()["Data"]["Data"]
-            df = pd.DataFrame(data)
-            ha = calcola_heikin_ashi(df)
-            p = float(df['close'].iloc[-1])
-            
-            if ha['close'].iloc[-1] > ha['open'].iloc[-1]:
-                sl = round(p * 0.99, 2)
-                tp = round(p * 1.02, 2)
-                lotti = max(0.01, round((s["CAPITALE"] * 0.02) / 100, 2))
+            url = f"https://min-api.cryptocompare.com/data/v2/histominute?fsym={fsym}&tsym={tsym}&limit=30"
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()["Data"]["Data"]
+                df = pd.DataFrame(data)
                 
-                msg = (f"📈 *BUY*\n"
-                       f"Entrata: {p:.2f}\n"
-                       f"Lotti: {lotti:.2f}\n"
-                       f"SL: {sl:.2f}\n"
-                       f"TP: {tp:.2f}")
-                bot.send_message(cid, msg, parse_mode="Markdown")
-                time.sleep(300)
-        except: 
-            pass
+                ha = calcola_heikin_ashi(df)
+                p = float(df['close'].iloc[-1])
+                sma = df['close'].rolling(window=20).mean().iloc[-1]
+                
+                # SEGNALE BUY
+                if ha['close'].iloc[-1] > ha['open'].iloc[-1] and p > sma:
+                    sl = round(p * 0.99, 2); tp = round(p * 1.02, 2)
+                    lotti = max(0.01, round((s["CAPITALE"] * 0.02) / 100, 2))
+                    msg = (f"📈 *BUY*\nEntrata: {p:.2f}\nSMA20: {sma:.2f}\nLotti: {lotti:.2f}\nSL: {sl:.2f}\nTP: {tp:.2f}")
+                    bot.send_message(cid, msg, parse_mode="Markdown")
+                    time.sleep(300)
+                
+                # SEGNALE SELL
+                elif ha['close'].iloc[-1] < ha['open'].iloc[-1] and p < sma:
+                    sl = round(p * 1.01, 2); tp = round(p * 0.98, 2)
+                    lotti = max(0.01, round((s["CAPITALE"] * 0.02) / 100, 2))
+                    msg = (f"📉 *SELL*\nEntrata: {p:.2f}\nSMA20: {sma:.2f}\nLotti: {lotti:.2f}\nSL: {sl:.2f}\nTP: {tp:.2f}")
+                    bot.send_message(cid, msg, parse_mode="Markdown")
+                    time.sleep(300)
+            
+        except Exception as e: print(f"Errore loop: {e}")
         time.sleep(30)
 
 # --- COMANDI ---
-@bot.message_handler(commands=['start', 'avvio', 'stop', 'cancella', 'reset', 'test'])
+@bot.message_handler(commands=['start', 'avvio', 'stop', 'cancella', 'reset'])
 def cmd(m):
     if m.chat.id not in ID_AUTORIZZATI: return
     c = m.text.split()[0]
     if c == '/start':
-        txt = ("🤖 *BENVENUTO*\nComandi: /avvio, /stop, /cancella (o /reset), /test\n\nPer iniziare, invia il CAPITALE.")
-        bot.reply_to(m, txt, parse_mode="Markdown")
+        bot.reply_to(m, "🤖 *BENVENUTO*\nInvia il CAPITALE per iniziare.", parse_mode="Markdown")
     elif c == '/avvio':
         s = get_stato_utente(m.chat.id)
         if s["CAPITALE"] > 0 and s["SIMBOLO"] != "":
@@ -94,29 +97,19 @@ def h(m):
     s = get_stato_utente(m.chat.id)
     if s["CAPITALE"] == 0:
         try: 
-            s["CAPITALE"] = float(m.text)
-            salva_stato_utente(m.chat.id, s)
+            s["CAPITALE"] = float(m.text); salva_stato_utente(m.chat.id, s)
             bot.reply_to(m, "✅ Capitale ricevuto. Ora invia l'ASSET (es: BTC-USD):")
         except: bot.reply_to(m, "⚠️ Inserisci un valore numerico.")
     elif s["SIMBOLO"] == "":
-        s["SIMBOLO"] = m.text.upper()
-        salva_stato_utente(m.chat.id, s)
+        s["SIMBOLO"] = m.text.upper(); salva_stato_utente(m.chat.id, s)
         bot.reply_to(m, "✅ Asset acquisito. Invia /avvio per iniziare.")
 
-# --- WEB SERVER PER RENDER ---
+# --- WEB SERVER ---
 app = Flask(__name__)
-
 @app.route('/')
-def home():
-    return "Bot is running!"
-
-def run_server():
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+def home(): return "Bot is running!"
 
 if __name__ == "__main__":
-    # Avvia il server web in un thread separato per mantenere il servizio attivo
-    threading.Thread(target=run_server, daemon=True).start()
-    
-    # Avvia il polling del bot
+    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080))), daemon=True).start()
     bot.remove_webhook()
     bot.infinity_polling(none_stop=True)
