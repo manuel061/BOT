@@ -10,6 +10,10 @@ class HealthCheck(BaseHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"OK")
+    
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
 
 def avvia_porta_render():
     port = int(os.environ.get("PORT", 10000))
@@ -128,9 +132,6 @@ def h(m):
         else: bot.reply_to(m, "❌ Asset non trovato.")
 
 if __name__ == "__main__":
-    # Avvio del server web per Render (Health Check)
     threading.Thread(target=avvia_porta_render, daemon=True).start()
-    # Avvio monitoraggio operazioni
     threading.Thread(target=monitora_tp_sl, daemon=True).start()
-    # Polling bot
     bot.infinity_polling(skip_pending=True)
