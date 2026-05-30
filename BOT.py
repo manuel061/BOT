@@ -100,7 +100,23 @@ def h(m):
     elif not s["SIMBOLO"]: s["SIMBOLO"] = m.text.upper(); salva_stato_utente(m.chat.id, s); bot.reply_to(m, "✅ Salvato. Invia /avvio.")
 
 if __name__ == "__main__":
+    # 1. Avvia il monitoraggio in background
     threading.Thread(target=monitora_tp_sl, daemon=True).start()
-    bot.remove_webhook()
-    bot.remove_webhook()
-    bot.infinity_polling(skip_pending=True)
+    
+    # 2. Pulizia forzata per evitare il conflitto 409
+    try:
+        print("Pulizia sessioni precedenti...")
+        bot.remove_webhook()
+        # Il parametro offset=-1 azzera la coda di messaggi in sospeso
+        requests.get(f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset=-1")
+    except Exception as e:
+        print(f"Errore pulizia: {e}")
+
+    # 3. Avvio con configurazione ottimizzata
+    print("Bot avviato correttamente.")
+    bot.infinity_polling(
+        skip_pending=True, 
+        none_stop=True, 
+        timeout=60, 
+        long_polling_timeout=60
+    )
