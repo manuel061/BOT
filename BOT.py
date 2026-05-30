@@ -46,11 +46,20 @@ def get_stato_utente(uid):
 # --- LOGICA BINANCE ---
 def verifica_asset(simbolo):
     raw = "".join(filter(str.isalnum, simbolo)).upper()
+    print(f"DEBUG: Trovato input {raw}")
     for s in [raw, raw + "USDT", raw + "USD"]:
         try:
-            r = requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={s}", timeout=5)
-            if r.status_code == 200: return s
-        except: continue
+            url = f"https://api.binance.com/api/v3/ticker/price?symbol={s}"
+            r = requests.get(url, timeout=10)
+            print(f"DEBUG: Binance ha risposto {r.status_code} per {s}")
+            if r.status_code == 200: 
+                print("DEBUG: Successo!")
+                return s
+            else:
+                print(f"DEBUG: Risposta testo: {r.text}") # Qui vedremo l'errore di Binance
+        except Exception as e:
+            print(f"DEBUG: Errore di rete: {e}")
+            continue
     return None
 
 # --- MONITORAGGIO ---
