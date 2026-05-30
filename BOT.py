@@ -102,4 +102,5 @@ def h(m):
 if __name__ == "__main__":
     threading.Thread(target=monitora_tp_sl, daemon=True).start()
     bot.remove_webhook()
+    bot.remove_webhook()
     bot.infinity_polling(skip_pending=True)
