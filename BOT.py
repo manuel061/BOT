@@ -38,17 +38,16 @@ def get_stato_utente(uid):
 
 # --- LOGICA ASSET STABILE (yfinance) ---
 def verifica_asset(simbolo):
-    # Pulisce l'input e aggiunge -USD per Yahoo Finance
-    raw = "".join(filter(str.isalnum, simbolo)).upper()
-    # Proviamo varianti comuni
-    for s in [raw, raw + "-USD", raw + "USDT-USD"]:
+    raw = simbolo.strip().upper().replace("/", "-")
+    # Tenta il formato esatto, poi con suffisso -USD o standard Forex =X
+    tentativi = [raw, f"{raw}-USD", f"{raw}USD=X"]
+    for s in tentativi:
         try:
             ticker = yf.Ticker(s)
-            if ticker.fast_info.get('last_price'):
+            if ticker.fast_info and ticker.fast_info.get('last_price'):
                 return s
         except: continue
     return None
-
 # --- MONITORAGGIO ---
 def monitora_tp_sl():
     while True:
