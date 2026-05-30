@@ -36,17 +36,32 @@ def get_stato_utente(uid):
         return res if res else {"cid": uid, "capitale": 0.0, "simbolo": "", "attivo": 0}
     except: return {"cid": uid, "capitale": 0.0, "simbolo": "", "attivo": 0}
 
-# --- LOGICA ASSET STABILE (yfinance) ---
 def verifica_asset(simbolo):
+    # 1. Pulisci l'input
     raw = simbolo.strip().upper().replace("/", "-")
-    # Tenta il formato esatto, poi con suffisso -USD o standard Forex =X
-    tentativi = [raw, f"{raw}-USD", f"{raw}USD=X"]
+    
+    # 2. Lista di tentativi (aggiungiamo anche varianti comuni crypto)
+    tentativi = [raw, f"{raw}-USD", f"{raw}USDT", f"{raw}USDT-USD", f"{raw}USD=X"]
+    
+    print(f"DEBUG: Input utente pulito: {raw}")
+    
     for s in tentativi:
         try:
             ticker = yf.Ticker(s)
-            if ticker.fast_info and ticker.fast_info.get('last_price'):
+            # Proviamo a ottenere informazioni base
+            info = ticker.fast_info
+            price = info.get('last_price')
+            
+            if price and price > 0:
+                print(f"DEBUG: SUCCESSO! Asset '{s}' trovato. Prezzo: {price}")
                 return s
-        except: continue
+            else:
+                print(f"DEBUG: Tentativo '{s}' fallito (prezzo non disponibile)")
+        except Exception as e:
+            print(f"DEBUG: Errore su '{s}': {str(e)}")
+            continue
+            
+    print("DEBUG: Nessun asset trovato per l'input fornito.")
     return None
 # --- MONITORAGGIO ---
 def monitora_tp_sl():
