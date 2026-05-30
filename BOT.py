@@ -45,9 +45,12 @@ def monitora_operazioni():
             conn = get_db(); cursor = conn.cursor(dictionary=True)
             cursor.execute("SELECT * FROM operazioni WHERE chiusa = 0")
             for op in cursor.fetchall():
-                fsym, tsym = op['simbolo'].split('-') if '-' in op['simbolo'] else ("BTC", "USD")
+                # Pulizia simbolo per sicurezza
+                sym = op['simbolo'].replace("-", "")
+                fsym, tsym = (sym[:-4], sym[-4:]) if len(sym) > 4 else ("BTC", "USDT")
                 url = f"https://min-api.cryptocompare.com/data/price?fsym={fsym}&tsym={tsym}"
-                p_attuale = float(requests.get(url).json().get(tsym, 0))
+                p_attuale = float(requests.get(url, timeout=10).json().get(tsym, 0))
+                
                 msg = None
                 if op['tipo'] == "BUY":
                     if p_attuale >= op['tp']: msg = f"✅ *TP RAGGIUNTO!* ({op['simbolo']})"
@@ -55,6 +58,7 @@ def monitora_operazioni():
                 else:
                     if p_attuale <= op['tp']: msg = f"✅ *TP RAGGIUNTO!* ({op['simbolo']})"
                     elif p_attuale >= op['sl']: msg = f"❌ *SL COLPITO!* ({op['simbolo']})"
+                
                 if msg:
                     bot.send_message(op['cid'], f"{msg}\nPrezzo: `{p_attuale:.2f}`", parse_mode="Markdown")
                     cursor.execute("UPDATE operazioni SET chiusa = 1 WHERE id = %s", (op['id'],))
@@ -74,25 +78,34 @@ def calcola_heikin_ashi(df):
 
 def avvia_scansione(cid):
     s = get_stato_utente(cid)
+    # Pulizia simbolo per API
+    sym = s['SIMBOLO'].replace("-", "")
+    fsym, tsym = (sym[:-4], sym[-4:]) if len(sym) > 4 else ("BTC", "USDT")
+    
     try:
-        fsym, tsym = s['SIMBOLO'].split('-')
-        test = requests.get(f"https://min-api.cryptocompare.com/data/price?fsym={fsym}&tsym={tsym}", timeout=5).json()
-        if "Response" in test and test["Response"] == "Error": raise Exception()
-    except:
-        bot.send_message(cid, "❌ *Asset non valido o mercato chiuso.*\n\n🔄 *Per favore, invia il nuovo ASSET (es: BTC-USD) e poi /avvio.*")
+        url = f"https://min-api.cryptocompare.com/data/price?fsym={fsym}&tsym={tsym}"
+        test = requests.get(url, timeout=15).json()
+        print(f"DEBUG API: {test}") # CONTROLLA QUESTO NEI LOG DI RENDER
+        
+        if "Response" in test and test["Response"] == "Error": 
+            raise Exception(f"API Error: {test.get('Message')}")
+    except Exception as e:
+        bot.send_message(cid, f"❌ *Errore:* `{e}`\n\n🔄 *Riprova con un asset diverso (es: BTCUSDT) o controlla i log.*")
         s["SIMBOLO"] = ""; s["ATTIVO"] = False; salva_stato_utente(cid, s); return
 
-    bot.send_message(cid, "🔍 *RICERCA OPERAZIONI ATTIVA*", parse_mode="Markdown")
+    bot.send_message(cid, f"🔍 *Ricerca attiva su {fsym}/{tsym}*", parse_mode="Markdown")
     while True:
         s = get_stato_utente(cid)
         if not s.get("ATTIVO"): break
         try:
-            data = requests.get(f"https://min-api.cryptocompare.com/data/v2/histominute?fsym={fsym}&tsym={tsym}&limit=30", timeout=10).json()
-            if data["Response"] == "Error": raise Exception()
+            data = requests.get(f"https://min-api.cryptocompare.com/data/v2/histominute?fsym={fsym}&tsym={tsym}&limit=30", timeout=15).json()
+            if data.get("Response") == "Error": raise Exception("Mercato non disponibile")
+            
             df = pd.DataFrame(data["Data"]["Data"])
             ha = calcola_heikin_ashi(df)
             p = float(df['close'].iloc[-1]); sma = df['close'].rolling(window=20).mean().iloc[-1]
             tipo = "BUY" if (ha['close'].iloc[-1] > ha['open'].iloc[-1] and p > sma) else ("SELL" if (ha['close'].iloc[-1] < ha['open'].iloc[-1] and p < sma) else None)
+            
             if tipo:
                 sl = round(p * 0.99, 2) if tipo == "BUY" else round(p * 1.01, 2)
                 tp = round(p * 1.02, 2) if tipo == "BUY" else round(p * 0.98, 2)
@@ -105,7 +118,7 @@ def avvia_scansione(cid):
                 bot.send_message(cid, f"{'🟢' if tipo=='BUY' else '🔴'} *SEGNALE {tipo}*\n💰 *Asset:* `{s['SIMBOLO']}`\n💵 *Entrata:* `{p:.2f}`\n🎯 *TP:* `{tp:.2f}`\n🛡️ *SL:* `{sl:.2f}`", parse_mode="Markdown")
                 time.sleep(300)
         except: 
-            bot.send_message(cid, "⚠️ *Mercato interrotto. Reinvia l'ASSET e /avvio per ripartire.*")
+            bot.send_message(cid, "⚠️ *Mercato interrotto. Reinvia l'ASSET e /avvio.*")
             s["SIMBOLO"] = ""; s["ATTIVO"] = False; salva_stato_utente(cid, s); break
         time.sleep(30)
 
@@ -120,7 +133,7 @@ def cmd(m):
         if s["CAPITALE"] > 0 and s["SIMBOLO"]:
             s["ATTIVO"] = True; salva_stato_utente(m.chat.id, s)
             threading.Thread(target=avvia_scansione, args=(m.chat.id,), daemon=True).start()
-        else: bot.reply_to(m, "⚠️ Configurazione incompleta. Assicurati di aver inviato CAPITALE e ASSET.")
+        else: bot.reply_to(m, "⚠️ Configurazione incompleta.")
     elif c == '/stop':
         s = get_stato_utente(m.chat.id); s["ATTIVO"] = False; salva_stato_utente(m.chat.id, s); bot.reply_to(m, "🔴 *Motore Fermo*")
     elif c in ['/cancella', '/reset']:
@@ -132,7 +145,7 @@ def h(m):
     s = get_stato_utente(m.chat.id)
     if s["CAPITALE"] <= 0:
         try: s["CAPITALE"] = float(m.text.replace(',', '.')); salva_stato_utente(m.chat.id, s); bot.reply_to(m, "✅ Capitale preso. Invia ASSET:")
-        except: bot.reply_to(m, "⚠️ Invia un numero valido per il capitale.")
+        except: bot.reply_to(m, "⚠️ Invia un numero.")
     elif s["SIMBOLO"] == "":
         s["SIMBOLO"] = m.text.strip().upper(); salva_stato_utente(m.chat.id, s); bot.reply_to(m, f"✅ `{s['SIMBOLO']}` salvato. Invia /avvio.")
     else: bot.reply_to(m, "ℹ️ Configurazione ok. Invia /avvio.")
