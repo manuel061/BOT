@@ -8,7 +8,6 @@ ID_AUTORIZZATI = [5628147908, 987654321]
 
 # --- CONNESSIONE DATABASE MIGLIORATA ---
 def get_db():
-    # Usa le variabili di ambiente se presenti, altrimenti usa i dati locali
     return mysql.connector.connect(
         host=os.environ.get("DB_HOST", "127.0.0.1"),
         user=os.environ.get("DB_USER", "root"),
@@ -81,7 +80,17 @@ def avvia_scansione(cid):
                     conn.commit()
                     conn.close()
                     
-                    msg = f"📈 *{tipo}*\nEntrata: {p:.2f}\nSMA20: {sma:.2f}\nLotti: {lotti:.2f}\nSL: {sl:.2f}\nTP: {tp:.2f}"
+                    # MESSAGGIO PIÙ BELLO
+                    em = "🟢" if tipo == "BUY" else "🔴"
+                    msg = (
+                        f"{em} *SEGNALE {tipo}*\n\n"
+                        f"💰 *Asset:* `{s['SIMBOLO']}`\n"
+                        f"💵 *Prezzo Entrata:* `{p:.2f}`\n\n"
+                        f"🎯 *Take Profit:* `{tp:.2f}`\n"
+                        f"🛡️ *Stop Loss:* `{sl:.2f}`\n"
+                        f"📊 *Volume Lotti:* `{lotti}`\n\n"
+                        f"_Segnale generato automaticamente_"
+                    )
                     bot.send_message(cid, msg, parse_mode="Markdown")
                     time.sleep(300)
         except Exception as e: print(f"Errore loop: {e}")
