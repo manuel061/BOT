@@ -1,4 +1,4 @@
-import telebot, requests, pandas as pd, numpy as np, time, threading, os, mysql.connector
+import telebot, pandas as pd, numpy as np, time, threading, os, mysql.connector, yfinance as yf
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 TOKEN = os.environ.get("TOKEN")
@@ -36,40 +36,33 @@ def get_stato_utente(uid):
         return res if res else {"cid": uid, "capitale": 0.0, "simbolo": "", "attivo": 0}
     except: return {"cid": uid, "capitale": 0.0, "simbolo": "", "attivo": 0}
 
+# --- LOGICA ASSET STABILE (yfinance) ---
 def verifica_asset(simbolo):
+    # Pulisce l'input e aggiunge -USD per Yahoo Finance
     raw = "".join(filter(str.isalnum, simbolo)).upper()
-    # Aggiungiamo headers per sembrare un vero browser
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
-    
-    for s in [raw, raw + "USDT"]:
+    # Proviamo varianti comuni
+    for s in [raw, raw + "-USD", raw + "USDT-USD"]:
         try:
-            url = f"https://api.binance.com/api/v3/ticker/price?symbol={s}"
-            r = requests.get(url, headers=headers, timeout=5)
-            
-            print(f"DEBUG: Tentativo per {s} -> Stato: {r.status_code}")
-            
-            if r.status_code == 200:
+            ticker = yf.Ticker(s)
+            if ticker.fast_info.get('last_price'):
                 return s
-            else:
-                print(f"DEBUG: Binance ha risposto con: {r.text}")
-        except Exception as e:
-            print(f"DEBUG: Connessione fallita per {s}. Errore: {e}")
-            
+        except: continue
     return None
-# --- MONITORAGGIO E SCANSIONE ---
+
+# --- MONITORAGGIO ---
 def monitora_tp_sl():
     while True:
         try:
             conn = get_db(); cursor = conn.cursor(dictionary=True)
             cursor.execute("SELECT * FROM operazioni WHERE chiusa = 0")
             for op in cursor.fetchall():
-                p = float(requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={op['simbolo']}").json().get('price', 0))
+                p = yf.Ticker(op['simbolo']).fast_info['last_price']
                 if p > 0:
                     if (op['tipo'] == "BUY" and p >= op['tp']) or (op['tipo'] == "SELL" and p <= op['tp']):
-                        bot.send_message(op['cid'], f"✅ *TP PRESO!* {op['simbolo']} a `{p}`")
+                        bot.send_message(op['cid'], f"✅ *TP PRESO!* {op['simbolo']} a `{p:.4f}`")
                         cursor.execute("UPDATE operazioni SET chiusa = 1 WHERE id = %s", (op['id'],))
                     elif (op['tipo'] == "BUY" and p <= op['sl']) or (op['tipo'] == "SELL" and p >= op['sl']):
-                        bot.send_message(op['cid'], f"❌ *SL PRESO!* {op['simbolo']} a `{p}`")
+                        bot.send_message(op['cid'], f"❌ *SL PRESO!* {op['simbolo']} a `{p:.4f}`")
                         cursor.execute("UPDATE operazioni SET chiusa = 1 WHERE id = %s", (op['id'],))
             conn.commit(); conn.close()
         except: pass
@@ -80,11 +73,10 @@ def avvia_scansione(cid):
         s = get_stato_utente(cid)
         if not s['attivo']: break
         try:
-            data = requests.get(f"https://api.binance.com/api/v3/klines?symbol={s['simbolo']}&interval=1m&limit=30").json()
-            df = pd.DataFrame(data, columns=['t', 'o', 'h', 'l', 'c', 'v', 'ct', 'q', 'n', 'tb', 'tq', 'i'])
-            df['c'] = df['c'].astype(float)
-            p = df['c'].iloc[-1]
-            sma = df['c'].rolling(20).mean().iloc[-1]
+            # Scarica dati storici via yfinance
+            df = yf.Ticker(s['simbolo']).history(period="1d", interval="1m")
+            p = df['Close'].iloc[-1]
+            sma = df['Close'].rolling(20).mean().iloc[-1]
             tipo = "BUY" if (p > sma) else "SELL"
             
             lotto = (s['capitale'] * 0.02) / (p * 0.01)
@@ -109,30 +101,28 @@ def cmd(m):
             salva_stato_db(cid, s['capitale'], s['simbolo'], 1)
             threading.Thread(target=avvia_scansione, args=(cid,), daemon=True).start()
             bot.reply_to(m, "🚀 Scansione avviata.")
-        else: bot.reply_to(m, "⚠️ Configurazione incompleta!")
     elif m.text == '/reset':
         conn = get_db(); cursor = conn.cursor()
         cursor.execute("DELETE FROM utenti WHERE cid = %s", (cid,))
-        conn.commit(); conn.close(); bot.reply_to(m, "🗑️ Tutto resettato.")
+        conn.commit(); conn.close(); bot.reply_to(m, "🗑️ Resettato.")
     elif m.text == '/stop':
         salva_stato_db(cid, get_stato_utente(cid)['capitale'], get_stato_utente(cid)['simbolo'], 0)
-        bot.reply_to(m, "⏹️ Scansione fermata.")
+        bot.reply_to(m, "⏹️ Fermato.")
 
 @bot.message_handler(func=lambda m: True)
 def h(m):
     cid = m.chat.id
     s = get_stato_utente(cid)
     if s['capitale'] <= 0:
-        try: salva_stato_db(cid, float(m.text.replace(',', '.')), "", 0); bot.reply_to(m, "✅ Capitale salvato. Ora invia l'ASSET (es: BTC, BTCUSDT)")
-        except: bot.reply_to(m, "⚠️ Inviami un numero valido per il capitale.")
+        try: salva_stato_db(cid, float(m.text.replace(',', '.')), "", 0); bot.reply_to(m, "✅ Capitale preso. Invia ASSET (es: BTC)")
+        except: bot.reply_to(m, "⚠️ Invia un numero.")
     elif not s['simbolo']:
         asset = verifica_asset(m.text)
-        if asset: salva_stato_db(cid, s['capitale'], asset, 0); bot.reply_to(m, f"✅ Asset `{asset}` accettato! Scrivi /avvio.")
-        else: bot.reply_to(m, "❌ Asset non trovato. Riprova con un formato chiaro (es: BTCUSDT).")
+        if asset: salva_stato_db(cid, s['capitale'], asset, 0); bot.reply_to(m, f"✅ Asset `{asset}` salvato. Invia /avvio.")
+        else: bot.reply_to(m, "❌ Asset non trovato.")
 
 if __name__ == "__main__":
     threading.Thread(target=avvia_porta_render, daemon=True).start()
     threading.Thread(target=monitora_tp_sl, daemon=True).start()
     bot.remove_webhook()
-    print("Bot avviato correttamente.")
     bot.infinity_polling(skip_pending=True)

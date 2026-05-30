@@ -4,3 +4,4 @@ pandas
 numpy
 flask
 mysql-connector-python
+yfinance
