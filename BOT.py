@@ -48,16 +48,26 @@ def salva_stato_utente(uid, s):
 # --- VALIDAZIONE ASSET ---
 def verifica_asset(simbolo):
     raw = "".join(filter(str.isalnum, simbolo)).upper()
-    fsym, tsym = (raw[:-4], "USDT") if raw.endswith("USDT") else (raw[:-3], "USD") if raw.endswith("USD") else (raw, "USDT")
+    # Logica semplificata: proviamo prima con USDT, poi con USD
+    fsym = raw.replace("USDT", "").replace("USD", "")
+    tsym = "USDT" if "USDT" in raw else "USD"
+    
+    url = f"https://min-api.cryptocompare.com/data/price?fsym={fsym}&tsym={tsym}"
     try:
-        url = f"https://min-api.cryptocompare.com/data/price?fsym={fsym}&tsym={tsym}"
-        data = requests.get(url).json()
-        if "Response" in data and data["Response"] == "Error": return None, None
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        
+        # LOG DI DEBUG: Questo ci dirà la verità nei log di Render
+        print(f"DEBUG API: URL={url} | RISPOSTA={data}")
+        
+        if "Response" in data and data["Response"] == "Error":
+            return None, None
+        
         prezzo = float(data.get(tsym, 0))
-        if prezzo <= 0: return None, None
-        return fsym, tsym
-    except: return None, None
-
+        return fsym, tsym if prezzo > 0 else None, None
+    except Exception as e:
+        print(f"DEBUG ERRORE: {e}")
+        return None, None
 def monitora_tp_sl():
     while True:
         try:
