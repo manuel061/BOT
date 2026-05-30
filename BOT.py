@@ -6,7 +6,7 @@ TOKEN = os.environ.get("TOKEN")
 bot = telebot.TeleBot(TOKEN)
 ID_AUTORIZZATI = [5628147908, 987654321]
 
-# --- CONNESSIONE DATABASE (Configurata per Render/Aiven) ---
+# --- CONNESSIONE DATABASE ---
 def get_db():
     return mysql.connector.connect(
         host=os.environ.get("DB_HOST", "127.0.0.1"),
@@ -24,7 +24,7 @@ def get_stato_utente(uid):
         res = cursor.fetchone()
         conn.close()
         if res: return {"CAPITALE": float(res['capitale']), "SIMBOLO": res['simbolo'], "ATTIVO": bool(res['attivo'])}
-    except Exception as e: print(f"Errore DB lettura: {e}")
+    except Exception as e: print(f"Errore DB in lettura: {e}")
     return {"CAPITALE": 0.0, "SIMBOLO": "", "ATTIVO": False}
 
 def salva_stato_utente(uid, s):
@@ -35,7 +35,7 @@ def salva_stato_utente(uid, s):
                        (uid, s["CAPITALE"], s["SIMBOLO"], int(s["ATTIVO"])))
         conn.commit()
         conn.close()
-    except Exception as e: print(f"Errore DB scrittura: {e}")
+    except Exception as e: print(f"Errore DB in scrittura: {e}")
 
 # --- CALCOLI ---
 def calcola_heikin_ashi(df):
@@ -117,14 +117,22 @@ def cmd(m):
 def h(m):
     if m.chat.id not in ID_AUTORIZZATI: return
     s = get_stato_utente(m.chat.id)
+    
+    # 1. Se il capitale è 0, chiediamo solo numeri
     if s["CAPITALE"] <= 0:
         try: 
             s["CAPITALE"] = float(m.text.replace(',', '.')); salva_stato_utente(m.chat.id, s)
             bot.reply_to(m, "✅ Capitale ricevuto. Ora invia l'ASSET (es: BTC-USD):")
-        except: bot.reply_to(m, "⚠️ Inserisci un valore numerico.")
+        except: bot.reply_to(m, "⚠️ Errore: Invia solo un numero per il capitale.")
+    
+    # 2. Se il capitale c'è ma il simbolo è vuoto, salviamo il simbolo
     elif s["SIMBOLO"] == "":
-        s["SIMBOLO"] = m.text.upper(); salva_stato_utente(m.chat.id, s)
-        bot.reply_to(m, f"✅ Asset `{s['SIMBOLO']}` acquisito. Invia /avvio per iniziare.", parse_mode="Markdown")
+        simbolo = m.text.strip().upper()
+        if "-" in simbolo:
+            s["SIMBOLO"] = simbolo; salva_stato_utente(m.chat.id, s)
+            bot.reply_to(m, f"✅ Asset `{s['SIMBOLO']}` acquisito. Invia /avvio per iniziare.", parse_mode="Markdown")
+        else:
+            bot.reply_to(m, "⚠️ Formato non valido! Usa: ASSET-VALUTA (es: BTC-USD).")
 
 if __name__ == "__main__":
     threading.Thread(target=lambda: Flask(__name__).run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080))), daemon=True).start()
