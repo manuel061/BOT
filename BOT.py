@@ -1,43 +1,56 @@
-import telebot, requests, pandas as pd, numpy as np, time, threading, json, os
+import telebot, requests, pandas as pd, numpy as np, time, threading, os, mysql.connector
 from flask import Flask
 
-# Usa la variabile d'ambiente per il token
+# Configurazione Token
 TOKEN = os.environ.get("TOKEN")
 bot = telebot.TeleBot(TOKEN)
-ID_AUTORIZZATI = [5628147908, 987654321] 
-LOG_FILE = "operazioni_log.json"
+ID_AUTORIZZATI = [5628147908, 987654321]
+
+# --- CONNESSIONE DATABASE MIGLIORATA ---
+def get_db():
+    # Usa le variabili di ambiente se presenti, altrimenti usa i dati locali
+    return mysql.connector.connect(
+        host=os.environ.get("DB_HOST", "127.0.0.1"),
+        user=os.environ.get("DB_USER", "root"),
+        password=os.environ.get("DB_PASS", "12345678"),
+        database=os.environ.get("DB_NAME", "seganli_bot"),
+        port=int(os.environ.get("DB_PORT", 3306))
+    )
+
+def get_stato_utente(uid):
+    try:
+        conn = get_db()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT * FROM utenti WHERE cid = %s", (uid,))
+        res = cursor.fetchone()
+        conn.close()
+        if res: return {"CAPITALE": float(res['capitale']), "SIMBOLO": res['simbolo'], "ATTIVO": bool(res['attivo'])}
+    except Exception as e: print(f"Errore DB in lettura: {e}")
+    return {"CAPITALE":0.0, "SIMBOLO":"", "ATTIVO":False}
+
+def salva_stato_utente(uid, s):
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("REPLACE INTO utenti (cid, capitale, simbolo, attivo) VALUES (%s, %s, %s, %s)",
+                       (uid, s["CAPITALE"], s["SIMBOLO"], int(s["ATTIVO"])))
+        conn.commit()
+        conn.close()
+    except Exception as e: print(f"Errore DB in scrittura: {e}")
 
 # --- CALCOLI ---
 def calcola_heikin_ashi(df):
     ha = pd.DataFrame(index=df.index, columns=['open', 'high', 'low', 'close'])
     ha['close'] = (df['open'] + df['high'] + df['low'] + df['close']) / 4
     ha.iloc[0,0] = (df['open'].iloc[0] + df['close'].iloc[0]) / 2
-    for i in range(1, len(df)): 
-        ha.iloc[i,0] = (ha.iloc[i-1,0] + ha.iloc[i-1,3]) / 2
+    for i in range(1, len(df)): ha.iloc[i,0] = (ha.iloc[i-1,0] + ha.iloc[i-1,3]) / 2
     ha['high'] = df[['high','open','close']].max(axis=1)
     ha['low'] = df[['low','open','close']].min(axis=1)
     return ha
 
-def get_stato_utente(uid):
-    if os.path.exists(LOG_FILE):
-        try: 
-            with open(LOG_FILE, "r") as f: 
-                return json.load(f).get(str(uid), {"CAPITALE":0.0, "SIMBOLO":"", "ATTIVO":False})
-        except: pass
-    return {"CAPITALE":0.0, "SIMBOLO":"", "ATTIVO":False}
-
-def salva_stato_utente(uid, s):
-    stati = {}
-    if os.path.exists(LOG_FILE):
-        try: 
-            with open(LOG_FILE, "r") as f: stati = json.load(f)
-        except: pass
-    stati[str(uid)] = s
-    with open(LOG_FILE, "w") as f: json.dump(stati, f)
-
 # --- MOTORE DI SCANSIONE ---
 def avvia_scansione(cid):
-    bot.send_message(cid, "🔍 *RICERCA OPERAZIONI BUY/SELL (FILTRO SMA20) ATTIVA...*", parse_mode="Markdown")
+    bot.send_message(cid, "🔍 *RICERCA OPERAZIONI ATTIVA*", parse_mode="Markdown")
     while True:
         s = get_stato_utente(cid)
         if not s.get("ATTIVO"): break
@@ -48,27 +61,29 @@ def avvia_scansione(cid):
             if response.status_code == 200:
                 data = response.json()["Data"]["Data"]
                 df = pd.DataFrame(data)
-                
                 ha = calcola_heikin_ashi(df)
                 p = float(df['close'].iloc[-1])
                 sma = df['close'].rolling(window=20).mean().iloc[-1]
                 
-                # SEGNALE BUY
-                if ha['close'].iloc[-1] > ha['open'].iloc[-1] and p > sma:
-                    sl = round(p * 0.99, 2); tp = round(p * 1.02, 2)
-                    lotti = max(0.01, round((s["CAPITALE"] * 0.02) / 100, 2))
-                    msg = (f"📈 *BUY*\nEntrata: {p:.2f}\nSMA20: {sma:.2f}\nLotti: {lotti:.2f}\nSL: {sl:.2f}\nTP: {tp:.2f}")
-                    bot.send_message(cid, msg, parse_mode="Markdown")
-                    time.sleep(300)
+                tipo = None
+                if ha['close'].iloc[-1] > ha['open'].iloc[-1] and p > sma: tipo = "BUY"
+                elif ha['close'].iloc[-1] < ha['open'].iloc[-1] and p < sma: tipo = "SELL"
                 
-                # SEGNALE SELL
-                elif ha['close'].iloc[-1] < ha['open'].iloc[-1] and p < sma:
-                    sl = round(p * 1.01, 2); tp = round(p * 0.98, 2)
+                if tipo:
+                    sl = round(p * 0.99, 2) if tipo == "BUY" else round(p * 1.01, 2)
+                    tp = round(p * 1.02, 2) if tipo == "BUY" else round(p * 0.98, 2)
                     lotti = max(0.01, round((s["CAPITALE"] * 0.02) / 100, 2))
-                    msg = (f"📉 *SELL*\nEntrata: {p:.2f}\nSMA20: {sma:.2f}\nLotti: {lotti:.2f}\nSL: {sl:.2f}\nTP: {tp:.2f}")
+                    
+                    conn = get_db()
+                    cursor = conn.cursor()
+                    cursor.execute("INSERT INTO operazioni (cid, tipo, entrata, tp, sl) VALUES (%s, %s, %s, %s, %s)", 
+                                   (cid, tipo, p, tp, sl))
+                    conn.commit()
+                    conn.close()
+                    
+                    msg = f"📈 *{tipo}*\nEntrata: {p:.2f}\nSMA20: {sma:.2f}\nLotti: {lotti:.2f}\nSL: {sl:.2f}\nTP: {tp:.2f}"
                     bot.send_message(cid, msg, parse_mode="Markdown")
                     time.sleep(300)
-            
         except Exception as e: print(f"Errore loop: {e}")
         time.sleep(30)
 
@@ -77,8 +92,7 @@ def avvia_scansione(cid):
 def cmd(m):
     if m.chat.id not in ID_AUTORIZZATI: return
     c = m.text.split()[0]
-    if c == '/start':
-        bot.reply_to(m, "🤖 *BENVENUTO*\nInvia il CAPITALE per iniziare.", parse_mode="Markdown")
+    if c == '/start': bot.reply_to(m, "🤖 *BENVENUTO*\nInvia il CAPITALE.", parse_mode="Markdown")
     elif c == '/avvio':
         s = get_stato_utente(m.chat.id)
         if s["CAPITALE"] > 0 and s["SIMBOLO"] != "":
@@ -104,12 +118,7 @@ def h(m):
         s["SIMBOLO"] = m.text.upper(); salva_stato_utente(m.chat.id, s)
         bot.reply_to(m, "✅ Asset acquisito. Invia /avvio per iniziare.")
 
-# --- WEB SERVER ---
-app = Flask(__name__)
-@app.route('/')
-def home(): return "Bot is running!"
-
 if __name__ == "__main__":
-    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080))), daemon=True).start()
+    threading.Thread(target=lambda: Flask(__name__).run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080))), daemon=True).start()
     bot.remove_webhook()
     bot.infinity_polling(none_stop=True)
