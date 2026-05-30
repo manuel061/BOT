@@ -1,12 +1,9 @@
 import telebot, requests, pandas as pd, numpy as np, time, threading, os, mysql.connector
 from flask import Flask
 
-# Configurazione Token
 TOKEN = os.environ.get("TOKEN")
 bot = telebot.TeleBot(TOKEN)
 ID_AUTORIZZATI = [5628147908, 987654321]
-
-# CACHE VELOCE
 cache_utenti = {}
 
 # --- CONNESSIONE DATABASE ---
@@ -28,8 +25,7 @@ def get_stato_utente(uid):
         stato = {"CAPITALE": float(res['capitale']), "SIMBOLO": res['simbolo'], "ATTIVO": bool(res['attivo'])} if res else {"CAPITALE": 0.0, "SIMBOLO": "", "ATTIVO": False}
         cache_utenti[uid] = stato
         return stato
-    except Exception as e: print(f"Errore DB lettura: {e}")
-    return {"CAPITALE": 0.0, "SIMBOLO": "", "ATTIVO": False}
+    except: return {"CAPITALE": 0.0, "SIMBOLO": "", "ATTIVO": False}
 
 def salva_stato_utente(uid, s):
     cache_utenti[uid] = s
@@ -39,17 +35,16 @@ def salva_stato_utente(uid, s):
             cursor.execute("REPLACE INTO utenti (cid, capitale, simbolo, attivo) VALUES (%s, %s, %s, %s)",
                            (uid, s["CAPITALE"], s["SIMBOLO"], int(s["ATTIVO"])))
             conn.commit(); conn.close()
-        except Exception as e: print(f"Errore DB scrittura: {e}")
+        except: pass
     threading.Thread(target=_salva).start()
 
-# --- FUNZIONE MONITORAGGIO TP/SL ---
+# --- MONITORAGGIO TP/SL ---
 def monitora_operazioni():
     while True:
         try:
             conn = get_db(); cursor = conn.cursor(dictionary=True)
             cursor.execute("SELECT * FROM operazioni WHERE chiusa = 0")
-            operazioni = cursor.fetchall()
-            for op in operazioni:
+            for op in cursor.fetchall():
                 fsym, tsym = op['simbolo'].split('-') if '-' in op['simbolo'] else ("BTC", "USD")
                 url = f"https://min-api.cryptocompare.com/data/price?fsym={fsym}&tsym={tsym}"
                 p_attuale = float(requests.get(url).json().get(tsym, 0))
@@ -67,7 +62,7 @@ def monitora_operazioni():
         except: pass
         time.sleep(60)
 
-# --- MOTORE DI SCANSIONE CON VALIDAZIONE ASSET ---
+# --- MOTORE DI SCANSIONE ---
 def calcola_heikin_ashi(df):
     ha = pd.DataFrame(index=df.index, columns=['open', 'high', 'low', 'close'])
     ha['close'] = (df['open'] + df['high'] + df['low'] + df['close']) / 4
@@ -79,13 +74,13 @@ def calcola_heikin_ashi(df):
 
 def avvia_scansione(cid):
     s = get_stato_utente(cid)
+    # Validazione e Reset Automatico
     try:
         fsym, tsym = s['SIMBOLO'].split('-')
-        # Verifica se l'asset è valido
         test = requests.get(f"https://min-api.cryptocompare.com/data/price?fsym={fsym}&tsym={tsym}", timeout=5).json()
-        if "Response" in test and test["Response"] == "Error": raise Exception("Asset invalido")
+        if "Response" in test and test["Response"] == "Error": raise Exception()
     except:
-        bot.send_message(cid, "❌ *Errore:* Mercato chiuso o asset errato. Reinserisci l'ASSET:")
+        bot.send_message(cid, "❌ *Asset non valido o mercato chiuso. Reset database in corso...*")
         s["SIMBOLO"] = ""; s["ATTIVO"] = False; salva_stato_utente(cid, s); return
 
     bot.send_message(cid, "🔍 *RICERCA OPERAZIONI ATTIVA*", parse_mode="Markdown")
@@ -94,7 +89,7 @@ def avvia_scansione(cid):
         if not s.get("ATTIVO"): break
         try:
             data = requests.get(f"https://min-api.cryptocompare.com/data/v2/histominute?fsym={fsym}&tsym={tsym}&limit=30", timeout=10).json()
-            if data["Response"] == "Error": raise Exception("Mercato chiuso")
+            if data["Response"] == "Error": raise Exception()
             df = pd.DataFrame(data["Data"]["Data"])
             ha = calcola_heikin_ashi(df)
             p = float(df['close'].iloc[-1]); sma = df['close'].rolling(window=20).mean().iloc[-1]
@@ -111,8 +106,8 @@ def avvia_scansione(cid):
                 bot.send_message(cid, f"{'🟢' if tipo=='BUY' else '🔴'} *SEGNALE {tipo}*\n💰 *Asset:* `{s['SIMBOLO']}`\n💵 *Entrata:* `{p:.2f}`\n🎯 *TP:* `{tp:.2f}`\n🛡️ *SL:* `{sl:.2f}`", parse_mode="Markdown")
                 time.sleep(300)
         except: 
-            bot.send_message(cid, "⚠️ *Mercato interrotto.* Reinvia /avvio quando pronto.")
-            s["ATTIVO"] = False; salva_stato_utente(cid, s); break
+            bot.send_message(cid, "⚠️ *Mercato interrotto. Reset in corso...*")
+            s["SIMBOLO"] = ""; s["ATTIVO"] = False; salva_stato_utente(cid, s); break
         time.sleep(30)
 
 # --- COMANDI ---
@@ -126,6 +121,7 @@ def cmd(m):
         if s["CAPITALE"] > 0 and s["SIMBOLO"]:
             s["ATTIVO"] = True; salva_stato_utente(m.chat.id, s)
             threading.Thread(target=avvia_scansione, args=(m.chat.id,), daemon=True).start()
+        else: bot.reply_to(m, "⚠️ Configurazione incompleta.")
     elif c == '/stop':
         s = get_stato_utente(m.chat.id); s["ATTIVO"] = False; salva_stato_utente(m.chat.id, s); bot.reply_to(m, "🔴 *Motore Fermo*")
     elif c in ['/cancella', '/reset']:
