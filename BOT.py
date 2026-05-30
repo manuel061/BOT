@@ -46,7 +46,10 @@ def monitora_tp_sl():
             conn = get_db(); cursor = conn.cursor(dictionary=True)
             cursor.execute("SELECT * FROM operazioni WHERE chiusa = 0")
             for op in cursor.fetchall():
-                p = float(requests.get(f"https://min-api.cryptocompare.com/data/price?fsym={op['simbolo'][:-4]}&tsym=USDT").json().get("USDT", 0))
+                # Estrai base e quote correttamente per l'API
+                base, quote = (op['simbolo'][:-4], "USDT") if "USDT" in op['simbolo'] else (op['simbolo'][:-3], "USD")
+                p = float(requests.get(f"https://min-api.cryptocompare.com/data/price?fsym={base}&tsym={quote}").json().get(quote, 0))
+                
                 if (op['tipo'] == "BUY" and p >= op['tp']) or (op['tipo'] == "SELL" and p <= op['tp']):
                     bot.send_message(op['cid'], f"✅ *TP PRESO!* {op['simbolo']} a `{p}`")
                     cursor.execute("UPDATE operazioni SET chiusa = 1 WHERE id = %s", (op['id'],))
@@ -60,11 +63,13 @@ def monitora_tp_sl():
 def avvia_scansione(cid):
     s = get_stato_utente(cid)
     raw = "".join(filter(str.isalnum, s['SIMBOLO'])).upper()
-    fsym, tsym = (raw[:-4], raw[-4:]) if len(raw) > 4 else ("BTC", "USDT")
+    
+    # Separazione dinamica corretta
+    fsym, tsym = (raw[:-4], "USDT") if raw.endswith("USDT") else (raw[:-3], "USD") if raw.endswith("USD") else (raw, "USDT")
     
     try:
         if "Error" in requests.get(f"https://min-api.cryptocompare.com/data/price?fsym={fsym}&tsym={tsym}").json().get("Response", ""): raise Exception()
-    except: bot.send_message(cid, "❌ Asset non valido. Invia /reset e riprova."); return
+    except: bot.send_message(cid, f"❌ *Asset {fsym}/{tsym} non valido.* Invia /reset e riprova."); return
 
     bot.send_message(cid, f"🔍 *Scansione {fsym}/{tsym} avviata.*")
     while get_stato_utente(cid).get("ATTIVO"):
@@ -84,39 +89,40 @@ def avvia_scansione(cid):
         except: pass
         time.sleep(60)
 
-@bot.message_handler(commands=['start', 'avvio', 'reset'])
+@bot.message_handler(commands=['start', 'avvio', 'reset', 'stop'])
 def cmd(m):
-    if m.text == '/start': bot.reply_to(m, "🤖 Invia CAPITALE.")
+    if m.text == '/start':
+        menu = (
+            "🤖 *BENVENUTO*\n\n"
+            "Comandi Disponibili:\n"
+            "/start: Messaggio di benvenuto.\n"
+            "/avvio: Avvia il monitoraggio dell'asset.\n"
+            "/stop: Ferma il monitoraggio.\n"
+            "/cancella o /reset: Pulisce i dati per ricominciare.\n\n"
+            "Invia il CAPITALE per iniziare."
+        )
+        bot.reply_to(m, menu, parse_mode="Markdown")
     elif m.text == '/avvio':
         s = get_stato_utente(m.chat.id)
         if s["CAPITALE"] > 0 and s["SIMBOLO"]:
             s["ATTIVO"] = True; salva_stato_utente(m.chat.id, s); threading.Thread(target=avvia_scansione, args=(m.chat.id,), daemon=True).start(); bot.reply_to(m, "🚀 Avviato.")
-    elif m.text == '/reset': salva_stato_utente(m.chat.id, {"CAPITALE":0.0, "SIMBOLO":"", "ATTIVO":False}); bot.reply_to(m, "🗑️ Resettato.")
+    elif m.text == '/reset' or m.text == '/cancella': 
+        salva_stato_utente(m.chat.id, {"CAPITALE":0.0, "SIMBOLO":"", "ATTIVO":False}); bot.reply_to(m, "🗑️ Resettato.")
+    elif m.text == '/stop':
+        s = get_stato_utente(m.chat.id); s["ATTIVO"] = False; salva_stato_utente(m.chat.id, s); bot.reply_to(m, "⏹️ Monitoraggio fermato.")
 
 @bot.message_handler(func=lambda m: True)
 def h(m):
     s = get_stato_utente(m.chat.id)
-    if s["CAPITALE"] <= 0: s["CAPITALE"] = float(m.text.replace(',', '.')); salva_stato_utente(m.chat.id, s); bot.reply_to(m, "✅ Capitale preso. Invia ASSET:")
-    elif not s["SIMBOLO"]: s["SIMBOLO"] = m.text.upper(); salva_stato_utente(m.chat.id, s); bot.reply_to(m, "✅ Salvato. Invia /avvio.")
+    if s["CAPITALE"] <= 0: 
+        try: s["CAPITALE"] = float(m.text.replace(',', '.')); salva_stato_utente(m.chat.id, s); bot.reply_to(m, "✅ Capitale preso. Invia ASSET:")
+        except: bot.reply_to(m, "⚠️ Invia un numero.")
+    elif not s["SIMBOLO"]: 
+        s["SIMBOLO"] = m.text.upper(); salva_stato_utente(m.chat.id, s); bot.reply_to(m, "✅ Salvato. Invia /avvio.")
 
 if __name__ == "__main__":
-    # 1. Avvia il monitoraggio in background
     threading.Thread(target=monitora_tp_sl, daemon=True).start()
-    
-    # 2. Pulizia forzata per evitare il conflitto 409
-    try:
-        print("Pulizia sessioni precedenti...")
-        bot.remove_webhook()
-        # Il parametro offset=-1 azzera la coda di messaggi in sospeso
-        requests.get(f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset=-1")
-    except Exception as e:
-        print(f"Errore pulizia: {e}")
-
-    # 3. Avvio con configurazione ottimizzata
-    print("Bot avviato correttamente.")
-    bot.infinity_polling(
-        skip_pending=True, 
-        none_stop=True, 
-        timeout=60, 
-        long_polling_timeout=60
-    )
+    bot.remove_webhook()
+    try: requests.get(f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset=-1")
+    except: pass
+    bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=60)
