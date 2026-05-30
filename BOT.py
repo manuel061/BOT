@@ -45,8 +45,9 @@ def monitora_operazioni():
             conn = get_db(); cursor = conn.cursor(dictionary=True)
             cursor.execute("SELECT * FROM operazioni WHERE chiusa = 0")
             for op in cursor.fetchall():
-                sym = op['simbolo'].replace("-", "").replace("/", "")
-                fsym, tsym = (sym[:-4], sym[-4:]) if len(sym) > 4 else ("BTC", "USDT")
+                sym = "".join(filter(str.isalnum, op['simbolo'])).upper()
+                fsym = sym[:-4] if len(sym) > 4 else "BTC"
+                tsym = sym[-4:] if len(sym) > 4 else "USDT"
                 url = f"https://min-api.cryptocompare.com/data/price?fsym={fsym}&tsym={tsym}"
                 p_attuale = float(requests.get(url, timeout=10).json().get(tsym, 0))
                 msg = None
@@ -75,19 +76,20 @@ def calcola_heikin_ashi(df):
 
 def avvia_scansione(cid):
     s = get_stato_utente(cid)
-    raw = s['SIMBOLO'].replace("-", "").replace("/", "").replace(" ", "").upper()
-    fsym, tsym = (raw[:-4], raw[-4:]) if len(raw) > 4 else ("BTC", "USDT")
+    raw = "".join(filter(str.isalnum, s['SIMBOLO'])).upper()
+    if raw.endswith("USDT"): fsym, tsym = raw[:-4], "USDT"
+    elif raw.endswith("USD"): fsym, tsym = raw[:-3], "USD"
+    else: fsym, tsym = raw, "USDT"
     
     try:
         url = f"https://min-api.cryptocompare.com/data/price?fsym={fsym}&tsym={tsym}"
-        test = requests.get(url, timeout=20).json()
-        if "Response" in test and test["Response"] == "Error":
-            raise Exception(test.get("Message", "Asset non trovato"))
+        test = requests.get(url, timeout=15).json()
+        if "Response" in test and test["Response"] == "Error": raise Exception(test.get("Message"))
     except Exception as e:
-        bot.send_message(cid, f"❌ *Errore di mercato:* `{e}`\n\n🔄 *Riprova inserendo solo il ticker (es: BTCUSDT).*")
+        bot.send_message(cid, f"❌ *Errore:* `{e}`")
         return
 
-    bot.send_message(cid, f"🔍 *Ricerca attiva su {fsym}/{tsym}*", parse_mode="Markdown")
+    bot.send_message(cid, f"🔍 *Analisi su {fsym}/{tsym} avviata*", parse_mode="Markdown")
     while True:
         s = get_stato_utente(cid)
         if not s.get("ATTIVO"): break
@@ -102,31 +104,26 @@ def avvia_scansione(cid):
                 sl = round(p * 0.99, 2) if tipo == "BUY" else round(p * 1.01, 2)
                 tp = round(p * 1.02, 2) if tipo == "BUY" else round(p * 0.98, 2)
                 def _ins():
-                    conn = get_db(); cursor = conn.cursor()
-                    cursor.execute("INSERT INTO operazioni (cid, tipo, entrata, tp, sl, simbolo, chiusa) VALUES (%s, %s, %s, %s, %s, %s, 0)", 
-                                   (cid, tipo, p, tp, sl, s['SIMBOLO']))
-                    conn.commit(); conn.close()
+                    try:
+                        conn = get_db(); cursor = conn.cursor()
+                        cursor.execute("INSERT INTO operazioni (cid, tipo, entrata, tp, sl, simbolo, chiusa) VALUES (%s, %s, %s, %s, %s, %s, 0)", (cid, tipo, p, tp, sl, s['SIMBOLO']))
+                        conn.commit(); conn.close()
+                    except: pass
                 threading.Thread(target=_ins).start()
                 bot.send_message(cid, f"{'🟢' if tipo=='BUY' else '🔴'} *SEGNALE {tipo}*\n💰 *Asset:* `{s['SIMBOLO']}`\n💵 *Entrata:* `{p:.2f}`\n🎯 *TP:* `{tp:.2f}`\n🛡️ *SL:* `{sl:.2f}`", parse_mode="Markdown")
                 time.sleep(300)
-        except: 
-            time.sleep(60)
+        except: time.sleep(60)
         time.sleep(30)
 
-# --- COMANDI ---
 @bot.message_handler(commands=['start', 'avvio', 'stop', 'cancella', 'reset'])
 def cmd(m):
     if m.chat.id not in ID_AUTORIZZATI: return
     c = m.text.split()[0]
-    if c == '/start': bot.reply_to(m, "🤖 *BENVENUTO*\nInvia il CAPITALE.", parse_mode="Markdown")
-    elif c == '/avvio':
+    if c == '/avvio':
         s = get_stato_utente(m.chat.id)
         if s["CAPITALE"] > 0 and s["SIMBOLO"]:
             s["ATTIVO"] = True; salva_stato_utente(m.chat.id, s)
             threading.Thread(target=avvia_scansione, args=(m.chat.id,), daemon=True).start()
-        else: bot.reply_to(m, "⚠️ Configurazione incompleta.")
-    elif c == '/stop':
-        s = get_stato_utente(m.chat.id); s["ATTIVO"] = False; salva_stato_utente(m.chat.id, s); bot.reply_to(m, "🔴 *Motore Fermo*")
     elif c in ['/cancella', '/reset']:
         salva_stato_utente(m.chat.id, {"CAPITALE":0.0, "SIMBOLO":"", "ATTIVO":False}); bot.reply_to(m, "🗑️ *Resettato.*")
 
@@ -139,9 +136,9 @@ def h(m):
         except: bot.reply_to(m, "⚠️ Invia un numero.")
     elif s["SIMBOLO"] == "":
         s["SIMBOLO"] = m.text.strip().upper(); salva_stato_utente(m.chat.id, s); bot.reply_to(m, f"✅ `{s['SIMBOLO']}` salvato. Invia /avvio.")
-    else: bot.reply_to(m, "ℹ️ Configurazione ok. Invia /avvio.")
 
 if __name__ == "__main__":
+    bot.remove_webhook()
     threading.Thread(target=monitora_operazioni, daemon=True).start()
     threading.Thread(target=lambda: Flask(__name__).run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080))), daemon=True).start()
-    bot.infinity_polling(none_stop=True)
+    bot.infinity_polling(none_stop=True, timeout=60, long_polling_timeout=60)
