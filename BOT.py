@@ -1,4 +1,5 @@
 import telebot, requests, pandas as pd, numpy as np, time, threading, json, os
+from flask import Flask
 
 TOKEN = "8822165462:AAE0bK08EDjW-VBf0H-j_OxV3oBp3KNFmaU"
 bot = telebot.TeleBot(TOKEN)
@@ -102,6 +103,20 @@ def h(m):
         salva_stato_utente(m.chat.id, s)
         bot.reply_to(m, "✅ Asset acquisito. Invia /avvio per iniziare.")
 
+# --- WEB SERVER PER RENDER ---
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+def run_server():
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
 if __name__ == "__main__":
+    # Avvia il server web in un thread separato per mantenere il servizio attivo
+    threading.Thread(target=run_server, daemon=True).start()
+    
+    # Avvia il polling del bot
     bot.remove_webhook()
     bot.infinity_polling(none_stop=True)
