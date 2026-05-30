@@ -2,8 +2,8 @@ import telebot, requests, pandas as pd, numpy as np, time, threading, os, mysql.
 
 TOKEN = os.environ.get("TOKEN")
 bot = telebot.TeleBot(TOKEN)
-cache_utenti = {}
 
+# --- SERVER FITTIZIO RENDER ---
 def avvia_porta_render():
     port = int(os.environ.get("PORT", 10000))
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -13,6 +13,7 @@ def avvia_porta_render():
         conn, addr = server.accept()
         conn.close()
 
+# --- CONNESSIONE DATABASE ---
 def get_db():
     return mysql.connector.connect(
         host=os.environ.get("DB_HOST", "127.0.0.1"), user=os.environ.get("DB_USER", "root"),
@@ -20,35 +21,32 @@ def get_db():
         port=int(os.environ.get("DB_PORT", 3306))
     )
 
+def salva_stato_db(uid, cap, sym, att):
+    try:
+        conn = get_db(); cursor = conn.cursor()
+        cursor.execute("REPLACE INTO utenti (cid, capitale, simbolo, attivo) VALUES (%s, %s, %s, %s)", (uid, float(cap), sym, int(att)))
+        conn.commit(); conn.close()
+    except: pass
+
 def get_stato_utente(uid):
-    if uid in cache_utenti: return cache_utenti[uid]
     try:
         conn = get_db(); cursor = conn.cursor(dictionary=True)
         cursor.execute("SELECT * FROM utenti WHERE cid = %s", (uid,))
         res = cursor.fetchone(); conn.close()
-        stato = {"CAPITALE": float(res['capitale']), "SIMBOLO": res['simbolo'], "ATTIVO": bool(res['attivo'])} if res else {"CAPITALE": 0.0, "SIMBOLO": "", "ATTIVO": False}
-        cache_utenti[uid] = stato
-        return stato
-    except: return {"CAPITALE": 0.0, "SIMBOLO": "", "ATTIVO": False}
+        return res if res else {"cid": uid, "capitale": 0.0, "simbolo": "", "attivo": 0}
+    except: return {"cid": uid, "capitale": 0.0, "simbolo": "", "attivo": 0}
 
-def salva_stato_utente(uid, s):
-    cache_utenti[uid] = s
-    def _salva():
-        try:
-            conn = get_db(); cursor = conn.cursor()
-            cursor.execute("REPLACE INTO utenti (cid, capitale, simbolo, attivo) VALUES (%s, %s, %s, %s)", (uid, s["CAPITALE"], s["SIMBOLO"], int(s["ATTIVO"])))
-            conn.commit(); conn.close()
-        except: pass
-    threading.Thread(target=_salva, daemon=True).start()
-
+# --- LOGICA BINANCE ---
 def verifica_asset(simbolo):
     raw = "".join(filter(str.isalnum, simbolo)).upper()
-    try:
-        r = requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={raw}", timeout=5)
-        if r.status_code == 200: return raw
-        return None
-    except: return None
+    for s in [raw, raw + "USDT", raw + "USD"]:
+        try:
+            r = requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={s}", timeout=5)
+            if r.status_code == 200: return s
+        except: continue
+    return None
 
+# --- MONITORAGGIO ---
 def monitora_tp_sl():
     while True:
         try:
@@ -68,53 +66,63 @@ def monitora_tp_sl():
         time.sleep(45)
 
 def avvia_scansione(cid):
-    s = get_stato_utente(cid)
-    simbolo = s["SIMBOLO"]
-    bot.send_message(cid, f"🔍 *Scansione {simbolo} avviata.*")
-    while get_stato_utente(cid).get("ATTIVO"):
+    while True:
+        s = get_stato_utente(cid)
+        if not s['attivo']: break
         try:
-            data = requests.get(f"https://api.binance.com/api/v3/klines?symbol={simbolo}&interval=1m&limit=30").json()
-            df = pd.DataFrame(data, columns=['t', 'open', 'high', 'low', 'close', 'v', 'ct', 'qav', 'num', 'taker_b', 'taker_q', 'ignore'])
-            df['close'] = df['close'].astype(float)
-            p = df['close'].iloc[-1]
-            delta = df['close'].diff()
+            data = requests.get(f"https://api.binance.com/api/v3/klines?symbol={s['simbolo']}&interval=1m&limit=30").json()
+            df = pd.DataFrame(data, columns=['t', 'o', 'h', 'l', 'c', 'v', 'ct', 'q', 'n', 'tb', 'tq', 'i'])
+            df['c'] = df['c'].astype(float)
+            p = df['c'].iloc[-1]
+            delta = df['c'].diff()
             rsi = (100 - (100 / (1 + (delta.where(delta > 0, 0).rolling(14).mean() / (-delta.where(delta < 0, 0).rolling(14).mean()))))).iloc[-1]
-            sma = df['close'].rolling(20).mean().iloc[-1]
+            sma = df['c'].rolling(20).mean().iloc[-1]
             tipo = "BUY" if (p > sma and rsi < 70) else ("SELL" if (p < sma and rsi > 30) else None)
             
             if tipo:
-                lotto = (s["CAPITALE"] * 0.02) / (p * 0.01)
+                lotto = (s['capitale'] * 0.02) / (p * 0.01)
                 tp, sl = (p*1.02, p*0.99) if tipo == "BUY" else (p*0.98, p*1.01)
                 conn = get_db(); cursor = conn.cursor()
-                cursor.execute("INSERT INTO operazioni (cid, tipo, entrata, tp, sl, simbolo) VALUES (%s, %s, %s, %s, %s, %s)", (cid, tipo, p, tp, sl, simbolo))
+                cursor.execute("INSERT INTO operazioni (cid, tipo, entrata, tp, sl, simbolo) VALUES (%s, %s, %s, %s, %s, %s)", (cid, tipo, p, tp, sl, s['simbolo']))
                 conn.commit(); conn.close()
-                msg = f"✨ **SEGNALE {tipo}**\n\n🔹 **Asset:** `{simbolo}`\n💰 **Entrata:** `{p:.4f}`\n🔢 **Lotti:** `{lotto:.4f}`\n🎯 **TP:** `{tp:.4f}`\n🛑 **SL:** `{sl:.4f}`\n📊 *Analisi:* {'Rialzista' if p > sma else 'Ribassista'}"
-                bot.send_message(cid, msg, parse_mode="Markdown")
+                bot.send_message(cid, f"✨ *SEGNALE {tipo}*\n\n🔹 {s['simbolo']}\n💰 Entrata: {p:.4f}\n🔢 Lotti: {lotto:.4f}\n🎯 TP: {tp:.4f}\n🛑 SL: {sl:.4f}", parse_mode="Markdown")
                 time.sleep(300)
         except: pass
         time.sleep(60)
 
-@bot.message_handler(commands=['start', 'avvio', 'reset', 'stop', 'cancella'])
+# --- COMANDI ---
+@bot.message_handler(commands=['start', 'avvio', 'reset', 'stop'])
 def cmd(m):
-    if m.text == '/start':
-        bot.reply_to(m, "🤖 *BENVENUTO*\nInvia CAPITALE per iniziare.", parse_mode="Markdown")
+    cid = m.chat.id
+    if m.text == '/start': bot.reply_to(m, "🤖 Invia CAPITALE.")
     elif m.text == '/avvio':
-        s = get_stato_utente(m.chat.id)
-        if s["CAPITALE"] > 0 and s["SIMBOLO"]:
-            s["ATTIVO"] = True; salva_stato_utente(m.chat.id, s); threading.Thread(target=avvia_scansione, args=(m.chat.id,), daemon=True).start(); bot.reply_to(m, "🚀 Avviato.")
-    elif m.text in ['/reset', '/cancella']: salva_stato_utente(m.chat.id, {"CAPITALE":0.0, "SIMBOLO":"", "ATTIVO":False}); bot.reply_to(m, "🗑️ Resettato.")
-    elif m.text == '/stop': s = get_stato_utente(m.chat.id); s["ATTIVO"] = False; salva_stato_utente(m.chat.id, s); bot.reply_to(m, "⏹️ Fermato.")
+        s = get_stato_utente(cid)
+        if s['capitale'] > 0 and s['simbolo']:
+            salva_stato_db(cid, s['capitale'], s['simbolo'], 1)
+            threading.Thread(target=avvia_scansione, args=(cid,), daemon=True).start()
+            bot.reply_to(m, "🚀 Avviato.")
+    elif m.text == '/reset':
+        try:
+            conn = get_db(); cursor = conn.cursor()
+            cursor.execute("DELETE FROM utenti WHERE cid = %s", (cid,))
+            conn.commit(); conn.close()
+            bot.reply_to(m, "🗑️ Resettato.")
+        except: pass
+    elif m.text == '/stop':
+        salva_stato_db(cid, get_stato_utente(cid)['capitale'], get_stato_utente(cid)['simbolo'], 0)
+        bot.reply_to(m, "⏹️ Fermato.")
 
 @bot.message_handler(func=lambda m: True)
 def h(m):
-    s = get_stato_utente(m.chat.id)
-    if s["CAPITALE"] <= 0:
-        try: s["CAPITALE"] = float(m.text.replace(',', '.')); salva_stato_utente(m.chat.id, s); bot.reply_to(m, "✅ Capitale preso. Invia ASSET (es: BTCUSDT):")
+    cid = m.chat.id
+    s = get_stato_utente(cid)
+    if s['capitale'] <= 0:
+        try: salva_stato_db(cid, float(m.text.replace(',', '.')), "", 0); bot.reply_to(m, "✅ Capitale preso. Invia ASSET:")
         except: bot.reply_to(m, "⚠️ Invia un numero.")
-    elif not s["SIMBOLO"]:
-        simbolo = verifica_asset(m.text)
-        if not simbolo: bot.reply_to(m, "❌ Asset non trovato su Binance. Reinserisci (es: BTCUSDT):")
-        else: s["SIMBOLO"] = simbolo; salva_stato_utente(m.chat.id, s); bot.reply_to(m, f"✅ `{simbolo}` salvato. Invia /avvio.")
+    elif not s['simbolo']:
+        asset = verifica_asset(m.text)
+        if asset: salva_stato_db(cid, s['capitale'], asset, 0); bot.reply_to(m, f"✅ `{asset}` salvato. Invia /avvio.")
+        else: bot.reply_to(m, "❌ Asset non trovato.")
 
 if __name__ == "__main__":
     threading.Thread(target=avvia_porta_render, daemon=True).start()
