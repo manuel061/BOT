@@ -37,7 +37,7 @@ def salva_stato_utente(uid, s):
         except: pass
     threading.Thread(target=_salva).start()
 
-# --- MOTORE DI SCANSIONE ---
+# --- LOGICA INDICATORI ---
 def calcola_heikin_ashi(df):
     ha = pd.DataFrame(index=df.index, columns=['open', 'high', 'low', 'close'])
     ha['close'] = (df['open'] + df['high'] + df['low'] + df['close']) / 4
@@ -47,11 +47,18 @@ def calcola_heikin_ashi(df):
     ha['low'] = df[['low','open','close']].min(axis=1)
     return ha
 
+def calcola_rsi(df, period=14):
+    delta = df['close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
 def avvia_scansione(cid):
     s = get_stato_utente(cid)
     raw = "".join(filter(str.isalnum, s['SIMBOLO'])).upper()
     fsym, tsym = (raw[:-4], raw[-4:]) if len(raw) > 4 else ("BTC", "USDT")
-    bot.send_message(cid, f"🔍 *Ricerca su {fsym}/{tsym}*", parse_mode="Markdown")
+    bot.send_message(cid, f"🔍 *Ricerca su {fsym}/{tsym} (RSI Attivo)*", parse_mode="Markdown")
     while True:
         s = get_stato_utente(cid)
         if not s.get("ATTIVO"): break
@@ -59,10 +66,17 @@ def avvia_scansione(cid):
             data = requests.get(f"https://min-api.cryptocompare.com/data/v2/histominute?fsym={fsym}&tsym={tsym}&limit=30", timeout=15).json()
             df = pd.DataFrame(data["Data"]["Data"])
             ha = calcola_heikin_ashi(df)
+            rsi = calcola_rsi(df).iloc[-1]
             p = float(df['close'].iloc[-1]); sma = df['close'].rolling(window=20).mean().iloc[-1]
-            tipo = "BUY" if (ha['close'].iloc[-1] > ha['open'].iloc[-1] and p > sma) else ("SELL" if (ha['close'].iloc[-1] < ha['open'].iloc[-1] and p < sma) else None)
+            
+            tipo = None
+            if ha['close'].iloc[-1] > ha['open'].iloc[-1] and p > sma and rsi < 70:
+                tipo = "BUY"
+            elif ha['close'].iloc[-1] < ha['open'].iloc[-1] and p < sma and rsi > 30:
+                tipo = "SELL"
+            
             if tipo:
-                bot.send_message(cid, f"{'🟢' if tipo=='BUY' else '🔴'} *SEGNALE {tipo}* ({s['SIMBOLO']}) - Prezzo: `{p:.2f}`", parse_mode="Markdown")
+                bot.send_message(cid, f"{'🟢' if tipo=='BUY' else '🔴'} *SEGNALE {tipo}* ({s['SIMBOLO']})\nPrezzo: `{p:.2f}`\nRSI: `{rsi:.1f}`", parse_mode="Markdown")
                 time.sleep(300)
         except: time.sleep(60)
         time.sleep(30)
@@ -81,7 +95,7 @@ def cmd(m):
         if s["CAPITALE"] > 0 and s["SIMBOLO"]:
             s["ATTIVO"] = True; salva_stato_utente(m.chat.id, s)
             threading.Thread(target=avvia_scansione, args=(m.chat.id,), daemon=True).start()
-            bot.reply_to(m, "🚀 *Motore Avviato*")
+            bot.reply_to(m, "🚀 *Motore Avviato (con filtro RSI)*")
         else: bot.reply_to(m, "⚠️ Configurazione incompleta.")
     elif c in ['/cancella', '/reset']:
         salva_stato_utente(m.chat.id, {"CAPITALE":0.0, "SIMBOLO":"", "ATTIVO":False}); bot.reply_to(m, "🗑️ *Resettato.*")
