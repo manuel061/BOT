@@ -118,7 +118,7 @@ def h(m):
     if m.chat.id not in ID_AUTORIZZATI: return
     s = get_stato_utente(m.chat.id)
     
-    # 1. Se il capitale è 0, chiediamo SOLO il numero
+    # 1. FASE CAPITALE: chiediamo un numero
     if s["CAPITALE"] <= 0:
         try: 
             s["CAPITALE"] = float(m.text.replace(',', '.'))
@@ -127,15 +127,11 @@ def h(m):
         except: 
             bot.reply_to(m, "⚠️ Errore: Invia un numero valido per il capitale.")
             
-    # 2. Se il capitale c'è ma il simbolo è vuoto, chiediamo SOLO il testo
+    # 2. FASE ASSET: chiediamo solo testo (senza tentare conversione numerica!)
     elif s["SIMBOLO"] == "":
-        simbolo = m.text.strip().upper()
-        if "-" in simbolo:
-            s["SIMBOLO"] = simbolo
-            salva_stato_utente(m.chat.id, s)
-            bot.reply_to(m, f"✅ Asset `{s['SIMBOLO']}` acquisito. Invia /avvio per iniziare.", parse_mode="Markdown")
-        else:
-            bot.reply_to(m, "⚠️ Formato non valido! Usa: ASSET-VALUTA (es: BTC-USD).")
+        s["SIMBOLO"] = m.text.strip().upper()
+        salva_stato_utente(m.chat.id, s)
+        bot.reply_to(m, f"✅ Asset `{s['SIMBOLO']}` acquisito. Invia /avvio per iniziare.", parse_mode="Markdown")
     
     else:
         bot.reply_to(m, "ℹ️ Hai già configurato tutto. Invia /avvio per far partire la scansione.")
