@@ -1,3 +1,4 @@
+
 import telebot, requests, pandas as pd, numpy as np, time, threading, os, mysql.connector, socket
 
 TOKEN = os.environ.get("TOKEN")
@@ -44,6 +45,19 @@ def salva_stato_utente(uid, s):
         except: pass
     threading.Thread(target=_salva, daemon=True).start()
 
+# --- VALIDAZIONE ASSET ---
+def verifica_asset(simbolo):
+    raw = "".join(filter(str.isalnum, simbolo)).upper()
+    fsym, tsym = (raw[:-4], "USDT") if raw.endswith("USDT") else (raw[:-3], "USD") if raw.endswith("USD") else (raw, "USDT")
+    try:
+        url = f"https://min-api.cryptocompare.com/data/price?fsym={fsym}&tsym={tsym}"
+        data = requests.get(url).json()
+        if "Response" in data and data["Response"] == "Error": return None, None
+        prezzo = float(data.get(tsym, 0))
+        if prezzo <= 0: return None, None
+        return fsym, tsym
+    except: return None, None
+
 def monitora_tp_sl():
     while True:
         try:
@@ -65,8 +79,7 @@ def monitora_tp_sl():
 
 def avvia_scansione(cid):
     s = get_stato_utente(cid)
-    raw = "".join(filter(str.isalnum, s['SIMBOLO'])).upper()
-    fsym, tsym = (raw[:-4], "USDT") if raw.endswith("USDT") else (raw[:-3], "USD") if raw.endswith("USD") else (raw, "USDT")
+    fsym, tsym = verifica_asset(s["SIMBOLO"])
     
     bot.send_message(cid, f"🔍 *Scansione {fsym}/{tsym} avviata.*")
     while get_stato_utente(cid).get("ATTIVO"):
@@ -74,37 +87,17 @@ def avvia_scansione(cid):
             data = requests.get(f"https://min-api.cryptocompare.com/data/v2/histominute?fsym={fsym}&tsym={tsym}&limit=30").json()["Data"]["Data"]
             df = pd.DataFrame(data)
             p = float(df['close'].iloc[-1])
-            delta = df['close'].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-            rs = gain / loss
-            rsi = (100 - (100 / (1 + rs))).iloc[-1]
+            rsi = (100 - (100 / (1 + (df['close'].diff().where(df['close'].diff() > 0, 0).rolling(14).mean() / (-df['close'].diff().where(df['close'].diff() < 0, 0).rolling(14).mean()))) )).iloc[-1]
             sma = df['close'].rolling(20).mean().iloc[-1]
             tipo = "BUY" if (p > sma and rsi < 70) else ("SELL" if (p < sma and rsi > 30) else None)
             
             if tipo:
-                rischio_valore = s["CAPITALE"] * 0.02
-                lotto = rischio_valore / (p * 0.01)
+                lotto = (s["CAPITALE"] * 0.02) / (p * 0.01)
                 tp, sl = (p*1.02, p*0.99) if tipo == "BUY" else (p*0.98, p*1.01)
-                
                 conn = get_db(); cursor = conn.cursor()
                 cursor.execute("INSERT INTO operazioni (cid, tipo, entrata, tp, sl, simbolo) VALUES (%s, %s, %s, %s, %s, %s)", (cid, tipo, p, tp, sl, fsym+tsym))
                 conn.commit(); conn.close()
-                
-                trend = "Rialzista (Prezzo > Media)" if p > sma else "Ribassista (Prezzo < Media)"
-                forza = "Ipervenduto" if rsi < 30 else ("Ipercomprato" if rsi > 70 else "Neutrale")
-                
-                msg = (
-                    f"✨ **SEGNALE OPERATIVO {tipo}** ✨\n\n"
-                    f"🔹 **Asset:** `{fsym+tsym}`\n"
-                    f"💰 **Prezzo Entrata:** `{p:.4f}`\n"
-                    f"🔢 **Lotti Suggeriti:** `{lotto:.4f}`\n"
-                    f"🎯 **Target Profit:** `{tp:.4f}`\n"
-                    f"🛑 **Stop Loss:** `{sl:.4f}`\n\n"
-                    f"📊 *Analisi:* Trend {trend}. Mercato {forza}.\n\n"
-                    f"🚀 *Monitoraggio H24 attivo.*"
-                )
-                bot.send_message(cid, msg, parse_mode="Markdown")
+                bot.send_message(cid, f"✨ **SEGNALE {tipo}**\n\n🔹 **Asset:** `{fsym+tsym}`\n💰 **Entrata:** `{p:.4f}`\n🔢 **Lotti:** `{lotto:.4f}`\n🎯 **TP:** `{tp:.4f}`\n🛑 **SL:** `{sl:.4f}`\n📊 *Analisi:* Trend {'Rialzista' if p > sma else 'Ribassista'}.", parse_mode="Markdown")
                 time.sleep(300)
         except: pass
         time.sleep(60)
@@ -112,22 +105,24 @@ def avvia_scansione(cid):
 @bot.message_handler(commands=['start', 'avvio', 'reset', 'stop', 'cancella'])
 def cmd(m):
     if m.text == '/start':
-        menu = ("🤖 *BENVENUTO*\n\nComandi disponibili:\n/start: Menu\n/avvio: Avvia scansione\n/stop: Ferma monitoraggio\n/reset: Pulisci dati\n\nInvia CAPITALE per iniziare.")
-        bot.reply_to(m, menu, parse_mode="Markdown")
+        bot.reply_to(m, "🤖 *BENVENUTO*\n/avvio: Avvia\n/stop: Ferma\n/reset: Reset\n\nInvia CAPITALE.", parse_mode="Markdown")
     elif m.text == '/avvio':
         s = get_stato_utente(m.chat.id)
         if s["CAPITALE"] > 0 and s["SIMBOLO"]:
             s["ATTIVO"] = True; salva_stato_utente(m.chat.id, s); threading.Thread(target=avvia_scansione, args=(m.chat.id,), daemon=True).start(); bot.reply_to(m, "🚀 Avviato.")
     elif m.text in ['/reset', '/cancella']: salva_stato_utente(m.chat.id, {"CAPITALE":0.0, "SIMBOLO":"", "ATTIVO":False}); bot.reply_to(m, "🗑️ Resettato.")
-    elif m.text == '/stop': s = get_stato_utente(m.chat.id); s["ATTIVO"] = False; salva_stato_utente(m.chat.id, s); bot.reply_to(m, "⏹️ Monitoraggio fermato.")
+    elif m.text == '/stop': s = get_stato_utente(m.chat.id); s["ATTIVO"] = False; salva_stato_utente(m.chat.id, s); bot.reply_to(m, "⏹️ Fermato.")
 
 @bot.message_handler(func=lambda m: True)
 def h(m):
     s = get_stato_utente(m.chat.id)
     if s["CAPITALE"] <= 0:
-        try: s["CAPITALE"] = float(m.text.replace(',', '.')); salva_stato_utente(m.chat.id, s); bot.reply_to(m, "✅ Capitale preso. Invia ASSET (es: BTCUSDT):")
+        try: s["CAPITALE"] = float(m.text.replace(',', '.')); salva_stato_utente(m.chat.id, s); bot.reply_to(m, "✅ Capitale preso. Invia ASSET:")
         except: bot.reply_to(m, "⚠️ Invia un numero.")
-    elif not s["SIMBOLO"]: s["SIMBOLO"] = m.text.upper(); salva_stato_utente(m.chat.id, s); bot.reply_to(m, f"✅ `{s['SIMBOLO']}` salvato. Invia /avvio.")
+    elif not s["SIMBOLO"]:
+        fsym, tsym = verifica_asset(m.text)
+        if not fsym: bot.reply_to(m, "❌ Asset non trovato o mercato fermo. Reinserisci ASSET valido (es: BTCUSDT):")
+        else: s["SIMBOLO"] = (fsym + tsym); salva_stato_utente(m.chat.id, s); bot.reply_to(m, f"✅ `{s['SIMBOLO']}` salvato. Invia /avvio.")
 
 if __name__ == "__main__":
     threading.Thread(target=avvia_porta_render, daemon=True).start()
