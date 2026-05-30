@@ -107,5 +107,13 @@ def h(m):
         bot.reply_to(m, f"✅ `{s['SIMBOLO']}` salvato. Invia /avvio.")
 
 if __name__ == "__main__":
-    bot.remove_webhook()
+    # Rimuove il webhook e force-chiude altre sessioni
+    try:
+        bot.remove_webhook()
+        # Richiesta diretta per pulire eventuali update pendenti su Telegram
+        requests.get(f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset=-1")
+    except Exception as e:
+        print(f"Errore durante la pulizia: {e}")
+
+    print("Bot avviato correttamente...")
     bot.infinity_polling(none_stop=True, timeout=60, long_polling_timeout=60)
