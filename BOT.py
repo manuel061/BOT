@@ -6,6 +6,9 @@ TOKEN = os.environ.get("TOKEN")
 bot = telebot.TeleBot(TOKEN)
 ID_AUTORIZZATI = [5628147908, 987654321]
 
+# CACHE VELOCE: Mantiene in RAM i dati degli utenti per non interrogare il DB ogni volta
+cache_utenti = {}
+
 # --- CONNESSIONE DATABASE ---
 def get_db():
     return mysql.connector.connect(
@@ -17,27 +20,33 @@ def get_db():
     )
 
 def get_stato_utente(uid):
+    if uid in cache_utenti: return cache_utenti[uid] # Ritorno immediato dalla RAM
     try:
         conn = get_db()
         cursor = conn.cursor(dictionary=True)
         cursor.execute("SELECT * FROM utenti WHERE cid = %s", (uid,))
         res = cursor.fetchone()
         conn.close()
-        if res: return {"CAPITALE": float(res['capitale']), "SIMBOLO": res['simbolo'], "ATTIVO": bool(res['attivo'])}
+        stato = {"CAPITALE": float(res['capitale']), "SIMBOLO": res['simbolo'], "ATTIVO": bool(res['attivo'])} if res else {"CAPITALE": 0.0, "SIMBOLO": "", "ATTIVO": False}
+        cache_utenti[uid] = stato
+        return stato
     except Exception as e: print(f"Errore DB lettura: {e}")
     return {"CAPITALE": 0.0, "SIMBOLO": "", "ATTIVO": False}
 
 def salva_stato_utente(uid, s):
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute("REPLACE INTO utenti (cid, capitale, simbolo, attivo) VALUES (%s, %s, %s, %s)",
-                       (uid, s["CAPITALE"], s["SIMBOLO"], int(s["ATTIVO"])))
-        conn.commit()
-        conn.close()
-    except Exception as e: print(f"Errore DB scrittura: {e}")
+    cache_utenti[uid] = s # Aggiornamento istantaneo in RAM
+    def _salva(): # Scrittura DB in thread separato per non bloccare il bot
+        try:
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute("REPLACE INTO utenti (cid, capitale, simbolo, attivo) VALUES (%s, %s, %s, %s)",
+                           (uid, s["CAPITALE"], s["SIMBOLO"], int(s["ATTIVO"])))
+            conn.commit()
+            conn.close()
+        except Exception as e: print(f"Errore DB scrittura: {e}")
+    threading.Thread(target=_salva).start()
 
-# --- CALCOLI ---
+# --- CALCOLI (Invariati) ---
 def calcola_heikin_ashi(df):
     ha = pd.DataFrame(index=df.index, columns=['open', 'high', 'low', 'close'])
     ha['close'] = (df['open'] + df['high'] + df['low'] + df['close']) / 4
@@ -73,29 +82,23 @@ def avvia_scansione(cid):
                     tp = round(p * 1.02, 2) if tipo == "BUY" else round(p * 0.98, 2)
                     lotti = max(0.01, round((s["CAPITALE"] * 0.02) / 100, 2))
                     
-                    conn = get_db()
-                    cursor = conn.cursor()
-                    cursor.execute("INSERT INTO operazioni (cid, tipo, entrata, tp, sl) VALUES (%s, %s, %s, %s, %s)", 
-                                   (cid, tipo, p, tp, sl))
-                    conn.commit()
-                    conn.close()
+                    # Scrittura DB asincrona per velocità
+                    def _insert():
+                        conn = get_db()
+                        cursor = conn.cursor()
+                        cursor.execute("INSERT INTO operazioni (cid, tipo, entrata, tp, sl) VALUES (%s, %s, %s, %s, %s)", 
+                                       (cid, tipo, p, tp, sl))
+                        conn.commit()
+                        conn.close()
+                    threading.Thread(target=_insert).start()
                     
                     em = "🟢" if tipo == "BUY" else "🔴"
-                    msg = (
-                        f"{em} *SEGNALE {tipo}*\n\n"
-                        f"💰 *Asset:* `{s['SIMBOLO']}`\n"
-                        f"💵 *Prezzo Entrata:* `{p:.2f}`\n\n"
-                        f"🎯 *Take Profit:* `{tp:.2f}`\n"
-                        f"🛡️ *Stop Loss:* `{sl:.2f}`\n"
-                        f"📊 *Volume Lotti:* `{lotti}`\n\n"
-                        f"_Segnale generato automaticamente_"
-                    )
-                    bot.send_message(cid, msg, parse_mode="Markdown")
+                    bot.send_message(cid, f"{em} *SEGNALE {tipo}*\n💰 *Asset:* `{s['SIMBOLO']}`\n💵 *Prezzo:* `{p:.2f}`\n🎯 *TP:* `{tp:.2f}`\n🛡️ *SL:* `{sl:.2f}`\n📊 *Lotti:* `{lotti}`", parse_mode="Markdown")
                     time.sleep(300)
         except Exception as e: print(f"Errore loop: {e}")
         time.sleep(30)
 
-# --- COMANDI ---
+# --- COMANDI E LOGICA (Invariati) ---
 @bot.message_handler(commands=['start', 'avvio', 'stop', 'cancella', 'reset'])
 def cmd(m):
     if m.chat.id not in ID_AUTORIZZATI: return
@@ -117,24 +120,15 @@ def cmd(m):
 def h(m):
     if m.chat.id not in ID_AUTORIZZATI: return
     s = get_stato_utente(m.chat.id)
-    
-    # 1. FASE CAPITALE: chiediamo un numero
     if s["CAPITALE"] <= 0:
         try: 
-            s["CAPITALE"] = float(m.text.replace(',', '.'))
-            salva_stato_utente(m.chat.id, s)
+            s["CAPITALE"] = float(m.text.replace(',', '.')); salva_stato_utente(m.chat.id, s)
             bot.reply_to(m, "✅ Capitale ricevuto. Ora invia l'ASSET (es: BTC-USD):")
-        except: 
-            bot.reply_to(m, "⚠️ Errore: Invia un numero valido per il capitale.")
-            
-    # 2. FASE ASSET: chiediamo solo testo (senza tentare conversione numerica!)
+        except: bot.reply_to(m, "⚠️ Errore: Invia un numero valido per il capitale.")
     elif s["SIMBOLO"] == "":
-        s["SIMBOLO"] = m.text.strip().upper()
-        salva_stato_utente(m.chat.id, s)
-        bot.reply_to(m, f"✅ Asset `{s['SIMBOLO']}` acquisito. Invia /avvio per iniziare.", parse_mode="Markdown")
-    
-    else:
-        bot.reply_to(m, "ℹ️ Hai già configurato tutto. Invia /avvio per far partire la scansione.")
+        s["SIMBOLO"] = m.text.strip().upper(); salva_stato_utente(m.chat.id, s)
+        bot.reply_to(m, f"✅ Asset `{s['SIMBOLO']}` acquisito. Invia /avvio.", parse_mode="Markdown")
+    else: bot.reply_to(m, "ℹ️ Hai già configurato tutto. Invia /avvio.")
 
 if __name__ == "__main__":
     threading.Thread(target=lambda: Flask(__name__).run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080))), daemon=True).start()
