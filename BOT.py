@@ -1,17 +1,22 @@
-import telebot, requests, pandas as pd, numpy as np, time, threading, os, mysql.connector, socket
+import telebot, requests, pandas as pd, numpy as np, time, threading, os, mysql.connector
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 TOKEN = os.environ.get("TOKEN")
 bot = telebot.TeleBot(TOKEN)
 
+# --- WEB SERVER PER RENDER (Health Check) ---
+class HealthCheck(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
 def avvia_porta_render():
     port = int(os.environ.get("PORT", 10000))
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind(("0.0.0.0", port))
-    server.listen(5)
-    while True:
-        conn, addr = server.accept()
-        conn.close()
+    server = HTTPServer(("0.0.0.0", port), HealthCheck)
+    server.serve_forever()
 
+# --- CONNESSIONE DATABASE ---
 def get_db():
     return mysql.connector.connect(
         host=os.environ.get("DB_HOST", "127.0.0.1"), user=os.environ.get("DB_USER", "root"),
@@ -34,10 +39,9 @@ def get_stato_utente(uid):
         return res if res else {"cid": uid, "capitale": 0.0, "simbolo": "", "attivo": 0}
     except: return {"cid": uid, "capitale": 0.0, "simbolo": "", "attivo": 0}
 
+# --- LOGICA BINANCE ---
 def verifica_asset(simbolo):
-    # Pulisce l'input: trasforma "BTC-USD" o "BTC/USD" in "BTCUSDT" o "BTCUSD"
     raw = "".join(filter(str.isalnum, simbolo)).upper()
-    # Binance richiede simboli esatti. Proviamo le combinazioni standard
     for s in [raw, raw + "USDT", raw + "USD"]:
         try:
             r = requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={s}", timeout=5)
@@ -45,6 +49,7 @@ def verifica_asset(simbolo):
         except: continue
     return None
 
+# --- MONITORAGGIO ---
 def monitora_tp_sl():
     while True:
         try:
@@ -68,7 +73,6 @@ def avvia_scansione(cid):
         s = get_stato_utente(cid)
         if not s['attivo']: break
         try:
-            # API Binance Klines
             data = requests.get(f"https://api.binance.com/api/v3/klines?symbol={s['simbolo']}&interval=1m&limit=30").json()
             df = pd.DataFrame(data, columns=['t', 'o', 'h', 'l', 'c', 'v', 'ct', 'q', 'n', 'tb', 'tq', 'i'])
             df['c'] = df['c'].astype(float)
@@ -89,6 +93,7 @@ def avvia_scansione(cid):
         except: pass
         time.sleep(60)
 
+# --- COMANDI ---
 @bot.message_handler(commands=['start', 'avvio', 'reset', 'stop'])
 def cmd(m):
     cid = m.chat.id
@@ -123,6 +128,9 @@ def h(m):
         else: bot.reply_to(m, "❌ Asset non trovato.")
 
 if __name__ == "__main__":
+    # Avvio del server web per Render (Health Check)
     threading.Thread(target=avvia_porta_render, daemon=True).start()
+    # Avvio monitoraggio operazioni
     threading.Thread(target=monitora_tp_sl, daemon=True).start()
+    # Polling bot
     bot.infinity_polling(skip_pending=True)
