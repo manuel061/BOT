@@ -138,18 +138,21 @@ def h(m):
         s["SIMBOLO"] = m.text.strip().upper(); salva_stato_utente(m.chat.id, s); bot.reply_to(m, f"✅ `{s['SIMBOLO']}` salvato. Invia /avvio.")
 
 if __name__ == "__main__":
-    # 1. Pulisce i webhook bloccati
-    bot.remove_webhook()
+    # Rimuove webhook residui che causano il conflitto 409
+    try:
+        bot.remove_webhook()
+    except:
+        pass
     
-    # 2. Avvia i thread (Monitoraggio e Flask)
+    # Avvia i processi secondari
     threading.Thread(target=monitora_operazioni, daemon=True).start()
     threading.Thread(target=lambda: Flask(__name__).run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080))), daemon=True).start()
     
-    # 3. Avvio del bot con configurazione anti-conflitto
-    print("Bot avviato correttamente...")
+    # Loop di polling robusto
+    print("Bot in ascolto...")
     while True:
         try:
-            bot.infinity_polling(none_stop=True, interval=1, timeout=60, long_polling_timeout=60)
+            bot.infinity_polling(none_stop=True, timeout=60, long_polling_timeout=60)
         except Exception as e:
-            print(f"Errore di polling: {e}")
-            time.sleep(15)
+            print(f"Errore rilevato: {e}. Riavvio in corso...")
+            time.sleep(5) # Attesa per liberare la connessione
