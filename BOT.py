@@ -53,7 +53,6 @@ def monitora_operazioni():
                 fsym, tsym = op['simbolo'].split('-') if '-' in op['simbolo'] else ("BTC", "USD")
                 url = f"https://min-api.cryptocompare.com/data/price?fsym={fsym}&tsym={tsym}"
                 p_attuale = float(requests.get(url).json().get(tsym, 0))
-                
                 msg = None
                 if op['tipo'] == "BUY":
                     if p_attuale >= op['tp']: msg = f"✅ *TP RAGGIUNTO!* ({op['simbolo']})"
@@ -61,7 +60,6 @@ def monitora_operazioni():
                 else:
                     if p_attuale <= op['tp']: msg = f"✅ *TP RAGGIUNTO!* ({op['simbolo']})"
                     elif p_attuale >= op['sl']: msg = f"❌ *SL COLPITO!* ({op['simbolo']})"
-                
                 if msg:
                     bot.send_message(op['cid'], f"{msg}\nPrezzo: `{p_attuale:.2f}`", parse_mode="Markdown")
                     cursor.execute("UPDATE operazioni SET chiusa = 1 WHERE id = %s", (op['id'],))
@@ -69,7 +67,7 @@ def monitora_operazioni():
         except: pass
         time.sleep(60)
 
-# --- MOTORE DI SCANSIONE ---
+# --- MOTORE DI SCANSIONE CON VALIDAZIONE ASSET ---
 def calcola_heikin_ashi(df):
     ha = pd.DataFrame(index=df.index, columns=['open', 'high', 'low', 'close'])
     ha['close'] = (df['open'] + df['high'] + df['low'] + df['close']) / 4
@@ -80,22 +78,30 @@ def calcola_heikin_ashi(df):
     return ha
 
 def avvia_scansione(cid):
+    s = get_stato_utente(cid)
+    try:
+        fsym, tsym = s['SIMBOLO'].split('-')
+        # Verifica se l'asset è valido
+        test = requests.get(f"https://min-api.cryptocompare.com/data/price?fsym={fsym}&tsym={tsym}", timeout=5).json()
+        if "Response" in test and test["Response"] == "Error": raise Exception("Asset invalido")
+    except:
+        bot.send_message(cid, "❌ *Errore:* Mercato chiuso o asset errato. Reinserisci l'ASSET:")
+        s["SIMBOLO"] = ""; s["ATTIVO"] = False; salva_stato_utente(cid, s); return
+
     bot.send_message(cid, "🔍 *RICERCA OPERAZIONI ATTIVA*", parse_mode="Markdown")
     while True:
         s = get_stato_utente(cid)
         if not s.get("ATTIVO"): break
         try:
-            fsym, tsym = s['SIMBOLO'].split('-')
-            data = requests.get(f"https://min-api.cryptocompare.com/data/v2/histominute?fsym={fsym}&tsym={tsym}&limit=30").json()["Data"]["Data"]
-            df = pd.DataFrame(data)
+            data = requests.get(f"https://min-api.cryptocompare.com/data/v2/histominute?fsym={fsym}&tsym={tsym}&limit=30", timeout=10).json()
+            if data["Response"] == "Error": raise Exception("Mercato chiuso")
+            df = pd.DataFrame(data["Data"]["Data"])
             ha = calcola_heikin_ashi(df)
             p = float(df['close'].iloc[-1]); sma = df['close'].rolling(window=20).mean().iloc[-1]
             tipo = "BUY" if (ha['close'].iloc[-1] > ha['open'].iloc[-1] and p > sma) else ("SELL" if (ha['close'].iloc[-1] < ha['open'].iloc[-1] and p < sma) else None)
-            
             if tipo:
                 sl = round(p * 0.99, 2) if tipo == "BUY" else round(p * 1.01, 2)
                 tp = round(p * 1.02, 2) if tipo == "BUY" else round(p * 0.98, 2)
-                lotti = max(0.01, round((s["CAPITALE"] * 0.02) / 100, 2))
                 def _ins():
                     conn = get_db(); cursor = conn.cursor()
                     cursor.execute("INSERT INTO operazioni (cid, tipo, entrata, tp, sl, simbolo, chiusa) VALUES (%s, %s, %s, %s, %s, %s, 0)", 
@@ -104,7 +110,9 @@ def avvia_scansione(cid):
                 threading.Thread(target=_ins).start()
                 bot.send_message(cid, f"{'🟢' if tipo=='BUY' else '🔴'} *SEGNALE {tipo}*\n💰 *Asset:* `{s['SIMBOLO']}`\n💵 *Entrata:* `{p:.2f}`\n🎯 *TP:* `{tp:.2f}`\n🛡️ *SL:* `{sl:.2f}`", parse_mode="Markdown")
                 time.sleep(300)
-        except: pass
+        except: 
+            bot.send_message(cid, "⚠️ *Mercato interrotto.* Reinvia /avvio quando pronto.")
+            s["ATTIVO"] = False; salva_stato_utente(cid, s); break
         time.sleep(30)
 
 # --- COMANDI ---
@@ -119,11 +127,9 @@ def cmd(m):
             s["ATTIVO"] = True; salva_stato_utente(m.chat.id, s)
             threading.Thread(target=avvia_scansione, args=(m.chat.id,), daemon=True).start()
     elif c == '/stop':
-        s = get_stato_utente(m.chat.id); s["ATTIVO"] = False; salva_stato_utente(m.chat.id, s)
-        bot.reply_to(m, "🔴 *Motore Fermo*")
+        s = get_stato_utente(m.chat.id); s["ATTIVO"] = False; salva_stato_utente(m.chat.id, s); bot.reply_to(m, "🔴 *Motore Fermo*")
     elif c in ['/cancella', '/reset']:
-        salva_stato_utente(m.chat.id, {"CAPITALE":0.0, "SIMBOLO":"", "ATTIVO":False})
-        bot.reply_to(m, "🗑️ *Resettato.*")
+        salva_stato_utente(m.chat.id, {"CAPITALE":0.0, "SIMBOLO":"", "ATTIVO":False}); bot.reply_to(m, "🗑️ *Resettato.*")
 
 @bot.message_handler(func=lambda m: True)
 def h(m):
@@ -139,5 +145,4 @@ def h(m):
 if __name__ == "__main__":
     threading.Thread(target=monitora_operazioni, daemon=True).start()
     threading.Thread(target=lambda: Flask(__name__).run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080))), daemon=True).start()
-    bot.remove_webhook()
     bot.infinity_polling(none_stop=True)
