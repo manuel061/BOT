@@ -24,7 +24,7 @@ def get_stato_utente(uid):
         res = cursor.fetchone()
         conn.close()
         if res: return {"CAPITALE": float(res['capitale']), "SIMBOLO": res['simbolo'], "ATTIVO": bool(res['attivo'])}
-    except Exception as e: print(f"Errore DB in lettura: {e}")
+    except Exception as e: print(f"Errore DB lettura: {e}")
     return {"CAPITALE": 0.0, "SIMBOLO": "", "ATTIVO": False}
 
 def salva_stato_utente(uid, s):
@@ -35,7 +35,7 @@ def salva_stato_utente(uid, s):
                        (uid, s["CAPITALE"], s["SIMBOLO"], int(s["ATTIVO"])))
         conn.commit()
         conn.close()
-    except Exception as e: print(f"Errore DB in scrittura: {e}")
+    except Exception as e: print(f"Errore DB scrittura: {e}")
 
 # --- CALCOLI ---
 def calcola_heikin_ashi(df):
@@ -118,21 +118,27 @@ def h(m):
     if m.chat.id not in ID_AUTORIZZATI: return
     s = get_stato_utente(m.chat.id)
     
-    # 1. Se il capitale è 0, chiediamo solo numeri
+    # 1. Se il capitale è 0, chiediamo SOLO il numero
     if s["CAPITALE"] <= 0:
         try: 
-            s["CAPITALE"] = float(m.text.replace(',', '.')); salva_stato_utente(m.chat.id, s)
+            s["CAPITALE"] = float(m.text.replace(',', '.'))
+            salva_stato_utente(m.chat.id, s)
             bot.reply_to(m, "✅ Capitale ricevuto. Ora invia l'ASSET (es: BTC-USD):")
-        except: bot.reply_to(m, "⚠️ Errore: Invia solo un numero per il capitale.")
-    
-    # 2. Se il capitale c'è ma il simbolo è vuoto, salviamo il simbolo
+        except: 
+            bot.reply_to(m, "⚠️ Errore: Invia un numero valido per il capitale.")
+            
+    # 2. Se il capitale c'è ma il simbolo è vuoto, chiediamo SOLO il testo
     elif s["SIMBOLO"] == "":
         simbolo = m.text.strip().upper()
         if "-" in simbolo:
-            s["SIMBOLO"] = simbolo; salva_stato_utente(m.chat.id, s)
+            s["SIMBOLO"] = simbolo
+            salva_stato_utente(m.chat.id, s)
             bot.reply_to(m, f"✅ Asset `{s['SIMBOLO']}` acquisito. Invia /avvio per iniziare.", parse_mode="Markdown")
         else:
             bot.reply_to(m, "⚠️ Formato non valido! Usa: ASSET-VALUTA (es: BTC-USD).")
+    
+    else:
+        bot.reply_to(m, "ℹ️ Hai già configurato tutto. Invia /avvio per far partire la scansione.")
 
 if __name__ == "__main__":
     threading.Thread(target=lambda: Flask(__name__).run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080))), daemon=True).start()
