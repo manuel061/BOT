@@ -36,34 +36,35 @@ def get_stato_utente(uid):
         return res if res else {"cid": uid, "capitale": 0.0, "simbolo": "", "attivo": 0}
     except: return {"cid": uid, "capitale": 0.0, "simbolo": "", "attivo": 0}
 def verifica_asset(simbolo):
-    # Pulisce l'input
+    # 1. Pulizia base
     s = simbolo.strip().upper()
     
-    # Lista di suffissi corretti per Yahoo Finance
-    # Se scrivi XAUUSD, diventa XAUUSD=X
-    # Se scrivi BTC, diventa BTC-USD
-    if s in ["XAUUSD", "GOLD", "XAU"]:
-        ticker = "XAUUSD=X"
-    elif s in ["BTC", "ETH", "SOL"]:
-        ticker = f"{s}-USD"
-    elif len(s) == 6 and s.endswith("USD"): # Es: EURUSD
-        ticker = f"{s}=X"
-    else:
-        # Per le azioni (es: AAPL, ENI) non aggiunge nulla
-        ticker = s
-        
-    print(f"DEBUG: Stai cercando l'asset: {ticker}")
+    # 2. Lista di suffissi da provare in ordine di probabilità
+    # Yahoo accetta questi standard per quasi tutto il mercato globale
+    suffissi = ["", "-USD", "=X", ".MI", ".L"] 
     
-    try:
-        t = yf.Ticker(ticker)
-        # Usiamo fast_info perché è il metodo più leggero e preciso
-        prezzo = t.fast_info.get('last_price')
-        if prezzo and prezzo > 0:
-            return ticker
-        return None
-    except Exception as e:
-        print(f"DEBUG: Errore Yahoo su {ticker}: {e}")
-        return None
+    for suff in suffissi:
+        target = f"{s}{suff}"
+        try:
+            t = yf.Ticker(target)
+            # Usiamo 'fast_info' che è il metodo più veloce per validare un asset
+            # Se l'asset non esiste, get('last_price') restituisce None o 0
+            prezzo = t.fast_info.get('last_price')
+            
+            if prezzo and prezzo > 0:
+                # Se arriviamo qui, l'asset esiste!
+                # CONTROLLO MERCATO CHIUSO:
+                # Se il volume è 0 (mercato fermo/chiuso), lo segnaliamo
+                volume = t.fast_info.get('last_volume', 0)
+                if volume == 0:
+                    return "CHIUSO"
+                
+                print(f"DEBUG: Trovato {target} con prezzo {prezzo}")
+                return target
+        except Exception:
+            continue
+            
+    return None
 def avvia_scansione(cid):
     bot.send_message(cid, "🔍 *Scansione attiva...*", parse_mode="Markdown")
     while True:
