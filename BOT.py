@@ -35,31 +35,35 @@ def get_stato_utente(uid):
         res = cursor.fetchone(); conn.close()
         return res if res else {"cid": uid, "capitale": 0.0, "simbolo": "", "attivo": 0}
     except: return {"cid": uid, "capitale": 0.0, "simbolo": "", "attivo": 0}
-import re
-
-import re
-
 def verifica_asset(simbolo):
-    # Pulisce l'input: "XAU/USD" diventa "XAUUSD"
-    raw = re.sub(r'[^A-Z0-9]', '', simbolo.strip().upper())
+    # Pulisce l'input
+    s = simbolo.strip().upper()
     
-    # Lista di tentativi prioritari
-    tentativi = [raw, f"{raw}-USD", f"{raw}USD=X", f"{raw}=X"]
+    # Lista di suffissi corretti per Yahoo Finance
+    # Se scrivi XAUUSD, diventa XAUUSD=X
+    # Se scrivi BTC, diventa BTC-USD
+    if s in ["XAUUSD", "GOLD", "XAU"]:
+        ticker = "XAUUSD=X"
+    elif s in ["BTC", "ETH", "SOL"]:
+        ticker = f"{s}-USD"
+    elif len(s) == 6 and s.endswith("USD"): # Es: EURUSD
+        ticker = f"{s}=X"
+    else:
+        # Per le azioni (es: AAPL, ENI) non aggiunge nulla
+        ticker = s
+        
+    print(f"DEBUG: Stai cercando l'asset: {ticker}")
     
-    for s in tentativi:
-        try:
-            ticker = yf.Ticker(s)
-            # Proviamo a leggere solo l'ultimo prezzo
-            hist = ticker.history(period="2d")
-            if not hist.empty and len(hist) >= 2:
-                # Se il prezzo di oggi è uguale a quello di ieri, è chiuso
-                if hist['Close'].iloc[-1] == hist['Close'].iloc[-2]:
-                    return "CHIUSO"
-                return s
-        except:
-            continue
-    return None
-
+    try:
+        t = yf.Ticker(ticker)
+        # Usiamo fast_info perché è il metodo più leggero e preciso
+        prezzo = t.fast_info.get('last_price')
+        if prezzo and prezzo > 0:
+            return ticker
+        return None
+    except Exception as e:
+        print(f"DEBUG: Errore Yahoo su {ticker}: {e}")
+        return None
 def avvia_scansione(cid):
     bot.send_message(cid, "🔍 *Scansione attiva...*", parse_mode="Markdown")
     while True:
