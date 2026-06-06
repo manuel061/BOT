@@ -61,23 +61,21 @@ def verifica_asset(simbolo):
             continue
             
     return None
-# --- LOGICA TRADING (Ottimizzata) ---
 def avvia_scansione(cid):
+    bot.send_message(cid, "🔍 *Scansione attiva...* In attesa di segnali.", parse_mode="Markdown")
     while True:
         s = get_stato_utente(cid)
-        if not s['attivo']: break
+        if not s or not s['attivo']: break
         try:
             df = yf.Ticker(s['simbolo']).history(period="1h", interval="1m")
+            if df.empty: time.sleep(60); continue
+            
             p = df['Close'].iloc[-1]
             sma = df['Close'].rolling(20).mean().iloc[-1]
             
-            if (p > sma): 
-                tipo = "BUY"
-            elif (p < sma):
-                tipo = "SELL"
-            else:
-                time.sleep(60) 
-                continue
+            if (p > sma): tipo = "BUY"
+            elif (p < sma): tipo = "SELL"
+            else: time.sleep(30); continue
             
             tp, sl = (p*1.01, p*0.995) if tipo == "BUY" else (p*0.99, p*1.005)
             
@@ -86,13 +84,20 @@ def avvia_scansione(cid):
                            (cid, tipo, p, tp, sl, s['simbolo']))
             conn.commit(); conn.close()
             
-            bot.send_message(cid, f"✨ *SEGNALE {tipo}* {s['simbolo']}\n💰 Entrata: {p:.4f}\n🎯 TP: {tp:.4f}\n🛑 SL: {sl:.4f}", parse_mode="Markdown")
+            # --- MESSAGGIO COPIA-INCOLLA ---
+            msg = (f"✨ *SEGNALE {tipo}*\n"
+                   f"➖➖➖➖➖➖➖➖\n"
+                   f"ASSET: `{s['simbolo']}`\n"
+                   f"PREZZO: `{p:.4f}`\n"
+                   f"TP: `{tp:.4f}`\n"
+                   f"SL: `{sl:.4f}`\n"
+                   f"➖➖➖➖➖➖➖➖\n"
+                   f"Copia i valori sopra per eseguire l'ordine.")
             
+            bot.send_message(cid, msg, parse_mode="Markdown")
             time.sleep(300) 
         except Exception as e:
-            print(f"Errore scansione: {e}")
             time.sleep(60)
-
 def monitora_tp_sl():
     while True:
         try:
