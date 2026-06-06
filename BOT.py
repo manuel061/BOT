@@ -4,7 +4,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 TOKEN = os.environ.get("TOKEN")
 bot = telebot.TeleBot(TOKEN)
 
-# --- SERVER HEALTH CHECK (Render) ---
+# --- SERVER HEALTH CHECK ---
 class HealthCheck(BaseHTTPRequestHandler):
     def do_GET(self): self.send_response(200); self.end_headers(); self.wfile.write(b"OK")
     def do_HEAD(self): self.send_response(200); self.end_headers()
@@ -37,63 +37,26 @@ def get_stato_utente(uid):
     except: return {"cid": uid, "capitale": 0.0, "simbolo": "", "attivo": 0}
 
 def verifica_asset(simbolo):
-    # 1. Pulisci l'input
     raw = simbolo.strip().upper().replace("/", "-")
-    
-    # 2. Lista di tentativi (aggiungiamo anche varianti comuni crypto)
     tentativi = [raw, f"{raw}-USD", f"{raw}USDT", f"{raw}USDT-USD", f"{raw}USD=X"]
-    
-    print(f"DEBUG: Input utente pulito: {raw}")
-    
     for s in tentativi:
         try:
             ticker = yf.Ticker(s)
-            # Proviamo a ottenere informazioni base
-            info = ticker.fast_info
-            price = info.get('last_price')
-            
-            if price and price > 0:
-                print(f"DEBUG: SUCCESSO! Asset '{s}' trovato. Prezzo: {price}")
-                return s
-            else:
-                print(f"DEBUG: Tentativo '{s}' fallito (prezzo non disponibile)")
-        except Exception as e:
-            print(f"DEBUG: Errore su '{s}': {str(e)}")
-            continue
-            
-    print("DEBUG: Nessun asset trovato per l'input fornito.")
+            if ticker.fast_info.get('last_price'): return s
+        except: continue
     return None
-# --- MONITORAGGIO ---
-def monitora_tp_sl():
-    while True:
-        try:
-            conn = get_db(); cursor = conn.cursor(dictionary=True)
-            cursor.execute("SELECT * FROM operazioni WHERE chiusa = 0")
-            for op in cursor.fetchall():
-                p = yf.Ticker(op['simbolo']).fast_info['last_price']
-                if p > 0:
-                    if (op['tipo'] == "BUY" and p >= op['tp']) or (op['tipo'] == "SELL" and p <= op['tp']):
-                        bot.send_message(op['cid'], f"✅ *TP PRESO!* {op['simbolo']} a `{p:.4f}`")
-                        cursor.execute("UPDATE operazioni SET chiusa = 1 WHERE id = %s", (op['id'],))
-                    elif (op['tipo'] == "BUY" and p <= op['sl']) or (op['tipo'] == "SELL" and p >= op['sl']):
-                        bot.send_message(op['cid'], f"❌ *SL PRESO!* {op['simbolo']} a `{p:.4f}`")
-                        cursor.execute("UPDATE operazioni SET chiusa = 1 WHERE id = %s", (op['id'],))
-            conn.commit(); conn.close()
-        except: pass
-        time.sleep(60)
 
+# --- LOGICA DI TRADING ---
 def avvia_scansione(cid):
     while True:
         s = get_stato_utente(cid)
         if not s['attivo']: break
         try:
-            # Scarica dati storici via yfinance
             df = yf.Ticker(s['simbolo']).history(period="1d", interval="1m")
             p = df['Close'].iloc[-1]
             sma = df['Close'].rolling(20).mean().iloc[-1]
             tipo = "BUY" if (p > sma) else "SELL"
             
-            lotto = (s['capitale'] * 0.02) / (p * 0.01)
             tp, sl = (p*1.02, p*0.99) if tipo == "BUY" else (p*0.98, p*1.01)
             
             conn = get_db(); cursor = conn.cursor()
@@ -104,36 +67,64 @@ def avvia_scansione(cid):
         except: pass
         time.sleep(60)
 
-# --- COMANDI ---
+def monitora_tp_sl():
+    while True:
+        try:
+            conn = get_db(); cursor = conn.cursor(dictionary=True)
+            cursor.execute("SELECT * FROM operazioni WHERE chiusa = 0")
+            for op in cursor.fetchall():
+                p = yf.Ticker(op['simbolo']).fast_info['last_price']
+                if p and p > 0:
+                    if (op['tipo'] == "BUY" and p >= op['tp']) or (op['tipo'] == "SELL" and p <= op['tp']):
+                        bot.send_message(op['cid'], f"✅ *TP PRESO!* {op['simbolo']} a `{p:.4f}`")
+                        cursor.execute("UPDATE operazioni SET chiusa = 1 WHERE id = %s", (op['id'],))
+                    elif (op['tipo'] == "BUY" and p <= op['sl']) or (op['tipo'] == "SELL" and p >= op['sl']):
+                        bot.send_message(op['cid'], f"❌ *SL PRESO!* {op['simbolo']} a `{p:.4f}`")
+                        cursor.execute("UPDATE operazioni SET chiusa = 1 WHERE id = %s", (op['id'],))
+            conn.commit(); conn.close()
+        except: pass
+        time.sleep(60)
+
+# --- GESTIONE MESSAGGI ---
 @bot.message_handler(commands=['start', 'avvio', 'reset', 'stop'])
 def cmd(m):
     cid = m.chat.id
-    if m.text == '/start': bot.reply_to(m, "🤖 Benvenuto! Invia il CAPITALE (es: 1000)")
+    if m.text == '/start':
+        salva_stato_db(cid, 0, "", 0)
+        bot.reply_to(m, "🤖 Benvenuto! Invia il CAPITALE (es: 1000)")
     elif m.text == '/avvio':
         s = get_stato_utente(cid)
         if s['capitale'] > 0 and s['simbolo']:
             salva_stato_db(cid, s['capitale'], s['simbolo'], 1)
             threading.Thread(target=avvia_scansione, args=(cid,), daemon=True).start()
             bot.reply_to(m, "🚀 Scansione avviata.")
+        else: bot.reply_to(m, "⚠️ Configurazione incompleta!")
     elif m.text == '/reset':
         conn = get_db(); cursor = conn.cursor()
         cursor.execute("DELETE FROM utenti WHERE cid = %s", (cid,))
-        conn.commit(); conn.close(); bot.reply_to(m, "🗑️ Resettato.")
+        conn.commit(); conn.close(); bot.reply_to(m, "🗑️ Reset completato.")
     elif m.text == '/stop':
         salva_stato_db(cid, get_stato_utente(cid)['capitale'], get_stato_utente(cid)['simbolo'], 0)
-        bot.reply_to(m, "⏹️ Fermato.")
+        bot.reply_to(m, "⏹️ Scansione fermata.")
 
 @bot.message_handler(func=lambda m: True)
 def h(m):
     cid = m.chat.id
     s = get_stato_utente(cid)
+    # Controllo se è un numero (capitale)
     if s['capitale'] <= 0:
-        try: salva_stato_db(cid, float(m.text.replace(',', '.')), "", 0); bot.reply_to(m, "✅ Capitale preso. Invia ASSET (es: BTC)")
-        except: bot.reply_to(m, "⚠️ Invia un numero.")
+        try:
+            cap = float(m.text.replace(',', '.'))
+            salva_stato_db(cid, cap, "", 0)
+            bot.reply_to(m, "✅ Capitale salvato. Ora invia l'ASSET (es: BTC, EUR/USD)")
+        except: bot.reply_to(m, "⚠️ Invia un numero valido per il capitale.")
+    # Controllo se è un asset
     elif not s['simbolo']:
         asset = verifica_asset(m.text)
-        if asset: salva_stato_db(cid, s['capitale'], asset, 0); bot.reply_to(m, f"✅ Asset `{asset}` salvato. Invia /avvio.")
-        else: bot.reply_to(m, "❌ Asset non trovato.")
+        if asset:
+            salva_stato_db(cid, s['capitale'], asset, 0)
+            bot.reply_to(m, f"✅ Asset `{asset}` accettato! Scrivi /avvio per iniziare.")
+        else: bot.reply_to(m, "❌ Asset non trovato. Riprova.")
 
 if __name__ == "__main__":
     threading.Thread(target=avvia_porta_render, daemon=True).start()
