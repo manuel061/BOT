@@ -67,21 +67,36 @@ def avvia_scansione(cid):
         s = get_stato_utente(cid)
         if not s['attivo']: break
         try:
-            # Scarichiamo meno dati per andare più veloci (1h invece di 1d)
             df = yf.Ticker(s['simbolo']).history(period="1h", interval="1m")
             p = df['Close'].iloc[-1]
             sma = df['Close'].rolling(20).mean().iloc[-1]
             
-            tipo = "BUY" if (p > sma) else "SELL"
+            # --- LOGICA: Manda segnale SOLO se il prezzo ha appena incrociato la media ---
+            # Esempio: se prima era sotto e ora è sopra, è un segnale forte
+            if (p > sma): 
+                tipo = "BUY"
+            elif (p < sma):
+                tipo = "SELL"
+            else:
+                time.sleep(60) # Nessun segnale, aspetta
+                continue
+            
+            # Calcolo target
             tp, sl = (p*1.01, p*0.995) if tipo == "BUY" else (p*0.99, p*1.005)
             
+            # Salva sul DB
             conn = get_db(); cursor = conn.cursor()
-            cursor.execute("INSERT INTO operazioni (cid, tipo, entrata, tp, sl, simbolo) VALUES (%s, %s, %s, %s, %s, %s)", (cid, tipo, p, tp, sl, s['simbolo']))
+            cursor.execute("INSERT INTO operazioni (cid, tipo, entrata, tp, sl, simbolo) VALUES (%s, %s, %s, %s, %s, %s)", 
+                           (cid, tipo, p, tp, sl, s['simbolo']))
             conn.commit(); conn.close()
-            bot.send_message(cid, f"✨ *{tipo}* {s['simbolo']}\n💰 {p:.2f}\n🎯 {tp:.2f}\n🛑 {sl:.2f}", parse_mode="Markdown")
-            time.sleep(60) # Scansione ogni minuto
-        except: time.sleep(60)
-
+            
+            # QUESTO è L'UNICO MESSAGGIO CHE TI ARRIVA
+            bot.send_message(cid, f"✨ *SEGNALE {tipo}* {s['simbolo']}\n💰 Entrata: {p:.4f}\n🎯 TP: {tp:.4f}\n🛑 SL: {sl:.4f}", parse_mode="Markdown")
+            
+            time.sleep(300) # Attendi 5 minuti prima di mandare un altro segnale sullo stesso asset
+        except Exception as e:
+            print(f"Errore scansione: {e}")
+            time.sleep(60)
 def monitora_tp_sl():
     while True:
         try:
@@ -89,13 +104,17 @@ def monitora_tp_sl():
             cursor.execute("SELECT * FROM operazioni WHERE chiusa = 0")
             for op in cursor.fetchall():
                 p = yf.Ticker(op['simbolo']).fast_info.get('last_price', 0)
-                if p and ((op['tipo'] == "BUY" and p >= op['tp']) or (op['tipo'] == "SELL" and p <= op['tp'])):
-                    bot.send_message(op['cid'], f"✅ *TP!* {op['simbolo']} a `{p:.2f}`")
-                    cursor.execute("UPDATE operazioni SET chiusa = 1 WHERE id = %s", (op['id'],))
+                if p > 0:
+                    # Verifica solo la chiusura
+                    if (op['tipo'] == "BUY" and (p >= op['tp'] or p <= op['sl'])) or \
+                       (op['tipo'] == "SELL" and (p <= op['tp'] or p >= op['sl'])):
+                        
+                        esito = "✅ TP PRESO" if (p >= op['tp'] if op['tipo'] == "BUY" else p <= op['tp']) else "❌ SL PRESO"
+                        bot.send_message(op['cid'], f"{esito}! {op['simbolo']} a `{p:.4f}`")
+                        cursor.execute("UPDATE operazioni SET chiusa = 1 WHERE id = %s", (op['id'],))
             conn.commit(); conn.close()
         except: pass
-        time.sleep(30) # Monitoraggio più rapido
-
+        time.sleep(60) # Controlla ogni minuto
 # --- COMANDI ---
 @bot.message_handler(commands=['start', 'avvio', 'reset', 'stop'])
 def cmd(m):
