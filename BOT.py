@@ -175,7 +175,15 @@ def h(m):
         else: bot.reply_to(m, "❌ Non trovato. Prova es: 'BTC-USD', 'EURUSD=X'")
 
 if __name__ == "__main__":
+    # Avvia i thread di supporto
     threading.Thread(target=avvia_porta_render, daemon=True).start()
     threading.Thread(target=monitora_tp_sl, daemon=True).start()
-    bot.remove_webhook()
-    bot.infinity_polling(skip_pending=True)
+    
+    # PULIZIA FORZATA: Rimuove webhook esistenti e scarta messaggi accumulati
+    try:
+        bot.remove_webhook()
+    except:
+        pass
+        
+    print("Bot avviato correttamente...")
+    bot.infinity_polling(skip_pending=True, logger_level=None)
