@@ -37,40 +37,27 @@ def get_stato_utente(uid):
     except: return {"cid": uid, "capitale": 0.0, "simbolo": "", "attivo": 0}
 import re
 
+import re
+
 def verifica_asset(simbolo):
-    # Pulisce l'input: rimuove tutto ciò che non è lettera o numero (es. / , - . spazio)
-    # Esempio: "XAU/USD" -> "XAUUSD", "BTC - USD" -> "BTCUSD"
+    # Pulisce l'input: "XAU/USD" diventa "XAUUSD"
     raw = re.sub(r'[^A-Z0-9]', '', simbolo.strip().upper())
     
-    # Lista di tentativi intelligenti basati sulla base pulita
-    tentativi = [
-        raw, 
-        f"{raw}-USD", 
-        f"{raw}USD=X", 
-        f"{raw}=X", 
-        f"{raw}.MI"
-    ]
-    
-    # Rimuove eventuali duplicati
-    tentativi = list(dict.fromkeys(tentativi)) 
-    
-    print(f"DEBUG: Input '{simbolo}' normalizzato in '{raw}' -> Tentativi: {tentativi}")
+    # Lista di tentativi prioritari
+    tentativi = [raw, f"{raw}-USD", f"{raw}USD=X", f"{raw}=X"]
     
     for s in tentativi:
         try:
             ticker = yf.Ticker(s)
-            df = ticker.history(period="1d", interval="1h")
-            
-            if len(df) >= 2:
-                # Se il prezzo di ora è identico a quello di un'ora fa, il mercato è fermo
-                if df['Close'].iloc[-1] == df['Close'].iloc[-2]:
+            # Proviamo a leggere solo l'ultimo prezzo
+            hist = ticker.history(period="2d")
+            if not hist.empty and len(hist) >= 2:
+                # Se il prezzo di oggi è uguale a quello di ieri, è chiuso
+                if hist['Close'].iloc[-1] == hist['Close'].iloc[-2]:
                     return "CHIUSO"
-                
-                print(f"DEBUG: Successo! Trovato ticker: {s}")
                 return s
-        except Exception:
+        except:
             continue
-            
     return None
 
 def avvia_scansione(cid):
@@ -155,17 +142,17 @@ def h(m):
         else: bot.reply_to(m, "❌ Non trovato. Prova es: 'BTC-USD', 'EURUSD=X'")
 
 if __name__ == "__main__":
-    # Avvia i thread di supporto
+    # 1. Avvia i thread
     threading.Thread(target=avvia_porta_render, daemon=True).start()
     threading.Thread(target=monitora_tp_sl, daemon=True).start()
     
-    # PULIZIA FORZATA: 
-    # Rimuove il webhook e scarta tutti gli aggiornamenti pendenti sul server Telegram
+    # 2. Forza la pulizia di Telegram (fondamentale per il 409)
     try:
-        bot.delete_webhook(drop_pending_updates=True)
-    except Exception as e:
-        print(f"Errore durante la pulizia del webhook: {e}")
-        
-    print("Bot avviato correttamente...")
-    # infinity_polling garantisce la riconnessione in caso di caduta
-    bot.infinity_polling(skip_pending=True)
+        bot.delete_webhook() 
+    except:
+        pass
+    
+    # 3. Avvio forzato
+    print("Avvio bot...")
+    # Rimuoviamo skip_pending se dà problemi e usiamo un polling semplice
+    bot.infinity_polling(timeout=20, long_polling_timeout=20)
