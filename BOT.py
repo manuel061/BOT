@@ -4,7 +4,7 @@ import yfinance as yf
 TOKEN = os.environ.get("TOKEN")
 bot = telebot.TeleBot(TOKEN)
 asset_cache = {} 
-yf.pdr_override()
+
 # --- SERVER HEALTH CHECK ---
 class HealthCheck(BaseHTTPRequestHandler):
     def do_GET(self): self.send_response(200); self.end_headers(); self.wfile.write(b"OK")
@@ -35,41 +35,28 @@ def get_stato_utente(uid):
         res = cursor.fetchone(); conn.close()
         return res if res else {"cid": uid, "capitale": 0.0, "simbolo": "", "attivo": 0}
     except: return {"cid": uid, "capitale": 0.0, "simbolo": "", "attivo": 0}
+
 def verifica_asset(simbolo):
-    # Pulisce l'input
     s = simbolo.strip().upper()
-    
-    # FORZATURA: Yahoo Finance richiede suffissi precisi. 
-    # Se scrivi XAUUSD, deve essere XAUUSD=X
-    # Se scrivi BTC, deve essere BTC-USD
-    
     mappa = {
-        "XAU": "XAUUSD=X", "XAUUSD": "XAUUSD=X",
-        "GOLD": "XAUUSD=X",
+        "XAU": "GC=F", "XAUUSD": "XAUUSD=X", "GOLD": "GC=F",
         "BTC": "BTC-USD", "BITCOIN": "BTC-USD",
         "ETH": "ETH-USD", "ETHEREUM": "ETH-USD",
         "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X"
     }
-    
-    # Se l'asset è nella mappa, usalo. Altrimenti prova quello scritto dall'utente
     target = mappa.get(s, s)
-    
     print(f"DEBUG: Cercando ticker: {target}")
-    
     try:
         t = yf.Ticker(target)
-        # Proviamo a leggere il prezzo attuale
-        info = t.fast_info
-        if info and 'last_price' in info:
-            p = info['last_price']
-            # Se il volume è 0, il mercato è chiuso
-            if info.get('last_volume', 0) == 0:
-                return "CHIUSO"
-            return target
+        df = t.history(period="1d", interval="1m")
+        if not df.empty:
+            prezzo = df['Close'].iloc[-1]
+            if prezzo > 0: return target
         return None
     except Exception as e:
         print(f"DEBUG: Errore critico su {target}: {e}")
         return None
+
 def avvia_scansione(cid):
     bot.send_message(cid, "🔍 *Scansione attiva...*", parse_mode="Markdown")
     while True:
@@ -129,6 +116,9 @@ def cmd(m):
         salva_stato_db(cid, get_stato_utente(cid)['capitale'], get_stato_utente(cid)['simbolo'], 1)
         threading.Thread(target=avvia_scansione, args=(cid,), daemon=True).start()
         bot.reply_to(m, "🚀 Avviato.")
+    elif m.text == '/stop':
+        salva_stato_db(cid, get_stato_utente(cid)['capitale'], get_stato_utente(cid)['simbolo'], 0)
+        bot.reply_to(m, "💤 Bot sospeso.")
     elif m.text == '/reset':
         conn = get_db(); cursor = conn.cursor()
         cursor.execute("DELETE FROM utenti WHERE cid = %s", (cid,))
@@ -152,17 +142,14 @@ def h(m):
         else: bot.reply_to(m, "❌ Non trovato. Prova es: 'BTC-USD', 'EURUSD=X'")
 
 if __name__ == "__main__":
-    # Avvia i thread in background
     threading.Thread(target=avvia_porta_render, daemon=True).start()
     threading.Thread(target=monitora_tp_sl, daemon=True).start()
     
-    print("Avvio bot in modalità polling...")
-    
-    # Infinity polling con parametri di sicurezza
-    # drop_pending_updates=True elimina tutto ciò che era in coda prima dell'avvio
-    bot.infinity_polling(
-        skip_pending=True, 
-        logger_level=None, 
-        timeout=30, 
-        long_polling_timeout=30
-    )
+    print("Avvio polling robusto...")
+    while True:
+        try:
+            bot.delete_webhook()
+            bot.polling(none_stop=True, interval=2)
+        except Exception as e:
+            print(f"Errore polling: {e}")
+            time.sleep(5)
