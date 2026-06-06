@@ -15,10 +15,11 @@ def avvia_porta_render():
     server.serve_forever()
 
 def get_db():
+    # MODIFICA: Aggiunto connect_timeout per evitare che il bot si blocchi se il DB è giù
     return mysql.connector.connect(
         host=os.environ.get("DB_HOST"), user=os.environ.get("DB_USER"),
         password=os.environ.get("DB_PASS"), database=os.environ.get("DB_NAME"),
-        port=int(os.environ.get("DB_PORT")), ssl_disabled=False 
+        port=int(os.environ.get("DB_PORT")), ssl_disabled=False, connect_timeout=5
     )
 
 def salva_stato_db(uid, cap, sym, att):
@@ -47,7 +48,6 @@ def verifica_asset(simbolo):
         try:
             print(f"DEBUG: Provando il simbolo: {s}")
             ticker = yf.Ticker(s)
-            # Aumentiamo la tolleranza e forziamo il recupero info
             info = ticker.history(period="1d")
             
             if not info.empty:
@@ -71,32 +71,28 @@ def avvia_scansione(cid):
             p = df['Close'].iloc[-1]
             sma = df['Close'].rolling(20).mean().iloc[-1]
             
-            # --- LOGICA: Manda segnale SOLO se il prezzo ha appena incrociato la media ---
-            # Esempio: se prima era sotto e ora è sopra, è un segnale forte
             if (p > sma): 
                 tipo = "BUY"
             elif (p < sma):
                 tipo = "SELL"
             else:
-                time.sleep(60) # Nessun segnale, aspetta
+                time.sleep(60) 
                 continue
             
-            # Calcolo target
             tp, sl = (p*1.01, p*0.995) if tipo == "BUY" else (p*0.99, p*1.005)
             
-            # Salva sul DB
             conn = get_db(); cursor = conn.cursor()
             cursor.execute("INSERT INTO operazioni (cid, tipo, entrata, tp, sl, simbolo) VALUES (%s, %s, %s, %s, %s, %s)", 
                            (cid, tipo, p, tp, sl, s['simbolo']))
             conn.commit(); conn.close()
             
-            # QUESTO è L'UNICO MESSAGGIO CHE TI ARRIVA
             bot.send_message(cid, f"✨ *SEGNALE {tipo}* {s['simbolo']}\n💰 Entrata: {p:.4f}\n🎯 TP: {tp:.4f}\n🛑 SL: {sl:.4f}", parse_mode="Markdown")
             
-            time.sleep(300) # Attendi 5 minuti prima di mandare un altro segnale sullo stesso asset
+            time.sleep(300) 
         except Exception as e:
             print(f"Errore scansione: {e}")
             time.sleep(60)
+
 def monitora_tp_sl():
     while True:
         try:
@@ -105,7 +101,6 @@ def monitora_tp_sl():
             for op in cursor.fetchall():
                 p = yf.Ticker(op['simbolo']).fast_info.get('last_price', 0)
                 if p > 0:
-                    # Verifica solo la chiusura
                     if (op['tipo'] == "BUY" and (p >= op['tp'] or p <= op['sl'])) or \
                        (op['tipo'] == "SELL" and (p <= op['tp'] or p >= op['sl'])):
                         
@@ -114,7 +109,7 @@ def monitora_tp_sl():
                         cursor.execute("UPDATE operazioni SET chiusa = 1 WHERE id = %s", (op['id'],))
             conn.commit(); conn.close()
         except: pass
-        time.sleep(60) # Controlla ogni minuto
+        time.sleep(60) 
 # --- COMANDI ---
 @bot.message_handler(commands=['start', 'avvio', 'reset', 'stop'])
 def cmd(m):
