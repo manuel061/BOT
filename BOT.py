@@ -146,17 +146,17 @@ def h(m):
         else: bot.reply_to(m, "❌ Non trovato. Prova es: 'BTC-USD', 'EURUSD=X'")
 
 if __name__ == "__main__":
-    # 1. Avvia i thread
+    # Avvia i thread in background
     threading.Thread(target=avvia_porta_render, daemon=True).start()
     threading.Thread(target=monitora_tp_sl, daemon=True).start()
     
-    # 2. Forza la pulizia di Telegram (fondamentale per il 409)
-    try:
-        bot.delete_webhook() 
-    except:
-        pass
+    print("Avvio bot in modalità polling...")
     
-    # 3. Avvio forzato
-    print("Avvio bot...")
-    # Rimuoviamo skip_pending se dà problemi e usiamo un polling semplice
-    bot.infinity_polling(timeout=20, long_polling_timeout=20)
+    # Infinity polling con parametri di sicurezza
+    # drop_pending_updates=True elimina tutto ciò che era in coda prima dell'avvio
+    bot.infinity_polling(
+        skip_pending=True, 
+        logger_level=None, 
+        timeout=30, 
+        long_polling_timeout=30
+    )
