@@ -109,6 +109,39 @@ def avvia_scansione(cid):
             time.sleep(120) # Attendi prima della prossima scansione
         except Exception as e:
             time.sleep(60)
+
+def monitora_tp_sl():
+    while True:
+        try:
+            conn = get_db()
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute("SELECT * FROM operazioni WHERE chiusa = 0")
+            operazioni = cursor.fetchall()
+            
+            for op in operazioni:
+                # Recupera l'ultimo prezzo reale
+                p = yf.Ticker(op['simbolo']).fast_info.get('last_price', 0)
+                
+                if p > 0:
+                    # Logica di uscita (TP o SL)
+                    if (op['tipo'] == "BUY" and (p >= op['tp'] or p <= op['sl'])) or \
+                       (op['tipo'] == "SELL" and (p <= op['tp'] or p >= op['sl'])):
+                        
+                        esito = "✅ TP PRESO" if (p >= op['tp'] if op['tipo'] == "BUY" else p <= op['tp']) else "❌ SL PRESO"
+                        
+                        # Invia notifica in chat
+                        bot.send_message(op['cid'], f"{esito}!\nAsset: `{op['simbolo']}`\nPrezzo: `{p:.4f}`")
+                        
+                        # Aggiorna il database
+                        cursor.execute("UPDATE operazioni SET chiusa = 1 WHERE id = %s", (op['id'],))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            print(f"Errore in monitora_tp_sl: {e}")
+        
+        time.sleep(60) # Pausa di 1 minuto tra un controllo e l'altro
 # --- COMANDI ---
 @bot.message_handler(commands=['start', 'avvio', 'reset', 'stop'])
 def cmd(m):
