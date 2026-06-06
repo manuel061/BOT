@@ -35,21 +35,42 @@ def get_stato_utente(uid):
         res = cursor.fetchone(); conn.close()
         return res if res else {"cid": uid, "capitale": 0.0, "simbolo": "", "attivo": 0}
     except: return {"cid": uid, "capitale": 0.0, "simbolo": "", "attivo": 0}
+import re
 
 def verifica_asset(simbolo):
-    raw = simbolo.strip().upper()
-    tentativi = [raw, f"{raw}-USD", f"{raw}USD=X", f"{raw}=X", f"{raw}.MI"]
+    # Pulisce l'input: rimuove tutto ciò che non è lettera o numero (es. / , - . spazio)
+    # Esempio: "XAU/USD" -> "XAUUSD", "BTC - USD" -> "BTCUSD"
+    raw = re.sub(r'[^A-Z0-9]', '', simbolo.strip().upper())
+    
+    # Lista di tentativi intelligenti basati sulla base pulita
+    tentativi = [
+        raw, 
+        f"{raw}-USD", 
+        f"{raw}USD=X", 
+        f"{raw}=X", 
+        f"{raw}.MI"
+    ]
+    
+    # Rimuove eventuali duplicati
     tentativi = list(dict.fromkeys(tentativi)) 
+    
+    print(f"DEBUG: Input '{simbolo}' normalizzato in '{raw}' -> Tentativi: {tentativi}")
     
     for s in tentativi:
         try:
             ticker = yf.Ticker(s)
             df = ticker.history(period="1d", interval="1h")
+            
             if len(df) >= 2:
+                # Se il prezzo di ora è identico a quello di un'ora fa, il mercato è fermo
                 if df['Close'].iloc[-1] == df['Close'].iloc[-2]:
                     return "CHIUSO"
+                
+                print(f"DEBUG: Successo! Trovato ticker: {s}")
                 return s
-        except Exception: continue
+        except Exception:
+            continue
+            
     return None
 
 def avvia_scansione(cid):
