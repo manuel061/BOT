@@ -62,7 +62,7 @@ def verifica_asset(simbolo):
             
     return None
 def avvia_scansione(cid):
-    bot.send_message(cid, "🔍 *Scansione attiva...* In attesa di segnali.", parse_mode="Markdown")
+    bot.send_message(cid, "🔍 *Scansione attiva...*", parse_mode="Markdown")
     while True:
         s = get_stato_utente(cid)
         if not s or not s['attivo']: break
@@ -73,48 +73,42 @@ def avvia_scansione(cid):
             p = df['Close'].iloc[-1]
             sma = df['Close'].rolling(20).mean().iloc[-1]
             
+            # Controllo incrocio
             if (p > sma): tipo = "BUY"
             elif (p < sma): tipo = "SELL"
             else: time.sleep(30); continue
             
             tp, sl = (p*1.01, p*0.995) if tipo == "BUY" else (p*0.99, p*1.005)
             
+            # Invio segnale
+            msg = (f"✨ *SEGNALE {tipo}* (Scade in 3 min!)\n"
+                   f"➖➖➖➖➖➖➖➖\n"
+                   f"ASSET: `{s['simbolo']}`\n"
+                   f"PREZZO: `{p:.4f}`\n"
+                   f"TP: `{tp:.4f}`\n"
+                   f"🛑 SL: `{sl:.4f}`\n"
+                   f"➖➖➖➖➖➖➖➖")
+            
+            sent = bot.send_message(cid, msg, parse_mode="Markdown")
+            
+            # --- AGGIUNTA LOGICA SCADENZA ---
+            time.sleep(180) # Aspetta 3 minuti
+            bot.edit_message_text(
+                chat_id=cid, 
+                message_id=sent.message_id, 
+                text=f"{msg}\n\n❌ *SEGNALE SCADUTO*", 
+                parse_mode="Markdown"
+            )
+            
+            # Salva sul DB solo se è arrivato in tempo (opzionale)
             conn = get_db(); cursor = conn.cursor()
             cursor.execute("INSERT INTO operazioni (cid, tipo, entrata, tp, sl, simbolo) VALUES (%s, %s, %s, %s, %s, %s)", 
                            (cid, tipo, p, tp, sl, s['simbolo']))
             conn.commit(); conn.close()
             
-            # --- MESSAGGIO COPIA-INCOLLA ---
-            msg = (f"✨ *SEGNALE {tipo}*\n"
-                   f"➖➖➖➖➖➖➖➖\n"
-                   f"ASSET: `{s['simbolo']}`\n"
-                   f"PREZZO: `{p:.4f}`\n"
-                   f"TP: `{tp:.4f}`\n"
-                   f"SL: `{sl:.4f}`\n"
-                   f"➖➖➖➖➖➖➖➖\n"
-                   f"Copia i valori sopra per eseguire l'ordine.")
-            
-            bot.send_message(cid, msg, parse_mode="Markdown")
-            time.sleep(300) 
+            time.sleep(120) # Attendi prima della prossima scansione
         except Exception as e:
             time.sleep(60)
-def monitora_tp_sl():
-    while True:
-        try:
-            conn = get_db(); cursor = conn.cursor(dictionary=True)
-            cursor.execute("SELECT * FROM operazioni WHERE chiusa = 0")
-            for op in cursor.fetchall():
-                p = yf.Ticker(op['simbolo']).fast_info.get('last_price', 0)
-                if p > 0:
-                    if (op['tipo'] == "BUY" and (p >= op['tp'] or p <= op['sl'])) or \
-                       (op['tipo'] == "SELL" and (p <= op['tp'] or p >= op['sl'])):
-                        
-                        esito = "✅ TP PRESO" if (p >= op['tp'] if op['tipo'] == "BUY" else p <= op['tp']) else "❌ SL PRESO"
-                        bot.send_message(op['cid'], f"{esito}! {op['simbolo']} a `{p:.4f}`")
-                        cursor.execute("UPDATE operazioni SET chiusa = 1 WHERE id = %s", (op['id'],))
-            conn.commit(); conn.close()
-        except: pass
-        time.sleep(60) 
 # --- COMANDI ---
 @bot.message_handler(commands=['start', 'avvio', 'reset', 'stop'])
 def cmd(m):
