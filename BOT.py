@@ -37,20 +37,30 @@ def get_stato_utente(uid):
     except: return {"cid": uid, "capitale": 0.0, "simbolo": "", "attivo": 0}
 
 def verifica_asset(simbolo):
-    # Uso della cache per velocità
-    if simbolo in asset_cache: return asset_cache[simbolo]
+    # Pulisce l'input
+    raw = simbolo.strip().upper().replace("/", "-")
+    tentativi = [raw, f"{raw}-USD", f"{raw}USD=X"]
     
-    # Tentativi intelligenti
-    varianti = [simbolo.upper(), f"{simbolo.upper()}-USD", f"{simbolo.upper()}USD=X"]
-    for s in varianti:
+    print(f"DEBUG: Tentativo di ricerca per: {raw}")
+    
+    for s in tentativi:
         try:
-            t = yf.Ticker(s)
-            if t.fast_info.get('last_price'):
-                asset_cache[simbolo] = s
+            print(f"DEBUG: Provando il simbolo: {s}")
+            ticker = yf.Ticker(s)
+            # Aumentiamo la tolleranza e forziamo il recupero info
+            info = ticker.history(period="1d")
+            
+            if not info.empty:
+                last_price = info['Close'].iloc[-1]
+                print(f"DEBUG: SUCCESSO! {s} ha prezzo {last_price}")
                 return s
-        except: continue
+            else:
+                print(f"DEBUG: {s} restituito vuoto da Yahoo")
+        except Exception as e:
+            print(f"DEBUG: Errore critico su {s}: {e}")
+            continue
+            
     return None
-
 # --- LOGICA TRADING (Ottimizzata) ---
 def avvia_scansione(cid):
     while True:
