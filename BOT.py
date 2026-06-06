@@ -1,10 +1,10 @@
 import telebot, pandas as pd, numpy as np, time, threading, os, mysql.connector, yfinance as yf
 from http.server import BaseHTTPRequestHandler, HTTPServer
-
+import yfinance as yf
 TOKEN = os.environ.get("TOKEN")
 bot = telebot.TeleBot(TOKEN)
 asset_cache = {} 
-
+yf.pdr_override()
 # --- SERVER HEALTH CHECK ---
 class HealthCheck(BaseHTTPRequestHandler):
     def do_GET(self): self.send_response(200); self.end_headers(); self.wfile.write(b"OK")
