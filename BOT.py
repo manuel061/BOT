@@ -40,7 +40,7 @@ def get_stato_utente(uid):
 def verifica_asset(simbolo):
     # Pulisce l'input
     raw = simbolo.strip().upper().replace("/", "-")
-    tentativi = [raw, f"{raw}-USD", f"{raw}USD=X"]
+    tentativi = [raw, f"{raw}-USD", f"{raw}USD=X", "XAUUSD=X"]
     
     print(f"DEBUG: Tentativo di ricerca per: {raw}")
     
@@ -48,14 +48,23 @@ def verifica_asset(simbolo):
         try:
             print(f"DEBUG: Provando il simbolo: {s}")
             ticker = yf.Ticker(s)
-            info = ticker.history(period="1d")
+            # Scarichiamo dati a 1 ora di intervallo per vedere se il prezzo si muove
+            df = ticker.history(period="1d", interval="1h")
             
-            if not info.empty:
-                last_price = info['Close'].iloc[-1]
-                print(f"DEBUG: SUCCESSO! {s} ha prezzo {last_price}")
+            if len(df) >= 2:
+                ultimo_prezzo = df['Close'].iloc[-1]
+                prezzo_precedente = df['Close'].iloc[-2]
+                
+                # CONTROLLO MERCATO CHIUSO:
+                # Se il prezzo di ora è identico a quello di un'ora fa, il mercato è fermo.
+                if ultimo_prezzo == prezzo_precedente:
+                    print(f"DEBUG: {s} mercato immobile/chiuso.")
+                    return "CHIUSO"
+                
+                print(f"DEBUG: SUCCESSO! {s} ha prezzo {ultimo_prezzo} ed è attivo.")
                 return s
             else:
-                print(f"DEBUG: {s} restituito vuoto da Yahoo")
+                print(f"DEBUG: {s} non ha abbastanza dati orari.")
         except Exception as e:
             print(f"DEBUG: Errore critico su {s}: {e}")
             continue
