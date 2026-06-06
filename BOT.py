@@ -36,35 +36,40 @@ def get_stato_utente(uid):
         return res if res else {"cid": uid, "capitale": 0.0, "simbolo": "", "attivo": 0}
     except: return {"cid": uid, "capitale": 0.0, "simbolo": "", "attivo": 0}
 def verifica_asset(simbolo):
-    # 1. Pulizia base
+    # Pulisce l'input
     s = simbolo.strip().upper()
     
-    # 2. Lista di suffissi da provare in ordine di probabilità
-    # Yahoo accetta questi standard per quasi tutto il mercato globale
-    suffissi = ["", "-USD", "=X", ".MI", ".L"] 
+    # FORZATURA: Yahoo Finance richiede suffissi precisi. 
+    # Se scrivi XAUUSD, deve essere XAUUSD=X
+    # Se scrivi BTC, deve essere BTC-USD
     
-    for suff in suffissi:
-        target = f"{s}{suff}"
-        try:
-            t = yf.Ticker(target)
-            # Usiamo 'fast_info' che è il metodo più veloce per validare un asset
-            # Se l'asset non esiste, get('last_price') restituisce None o 0
-            prezzo = t.fast_info.get('last_price')
-            
-            if prezzo and prezzo > 0:
-                # Se arriviamo qui, l'asset esiste!
-                # CONTROLLO MERCATO CHIUSO:
-                # Se il volume è 0 (mercato fermo/chiuso), lo segnaliamo
-                volume = t.fast_info.get('last_volume', 0)
-                if volume == 0:
-                    return "CHIUSO"
-                
-                print(f"DEBUG: Trovato {target} con prezzo {prezzo}")
-                return target
-        except Exception:
-            continue
-            
-    return None
+    mappa = {
+        "XAU": "XAUUSD=X", "XAUUSD": "XAUUSD=X",
+        "GOLD": "XAUUSD=X",
+        "BTC": "BTC-USD", "BITCOIN": "BTC-USD",
+        "ETH": "ETH-USD", "ETHEREUM": "ETH-USD",
+        "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X"
+    }
+    
+    # Se l'asset è nella mappa, usalo. Altrimenti prova quello scritto dall'utente
+    target = mappa.get(s, s)
+    
+    print(f"DEBUG: Cercando ticker: {target}")
+    
+    try:
+        t = yf.Ticker(target)
+        # Proviamo a leggere il prezzo attuale
+        info = t.fast_info
+        if info and 'last_price' in info:
+            p = info['last_price']
+            # Se il volume è 0, il mercato è chiuso
+            if info.get('last_volume', 0) == 0:
+                return "CHIUSO"
+            return target
+        return None
+    except Exception as e:
+        print(f"DEBUG: Errore critico su {target}: {e}")
+        return None
 def avvia_scansione(cid):
     bot.send_message(cid, "🔍 *Scansione attiva...*", parse_mode="Markdown")
     while True:
