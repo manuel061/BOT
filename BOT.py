@@ -134,9 +134,17 @@ def h(m):
         else: bot.reply_to(m, "❌ Non trovato. Prova es: 'BTC-USD', 'EURUSD=X'")
 
 if __name__ == "__main__":
+    # Avvia i thread di supporto
     threading.Thread(target=avvia_porta_render, daemon=True).start()
     threading.Thread(target=monitora_tp_sl, daemon=True).start()
-    try: bot.remove_webhook()
-    except: pass
+    
+    # PULIZIA FORZATA: 
+    # Rimuove il webhook e scarta tutti gli aggiornamenti pendenti sul server Telegram
+    try:
+        bot.delete_webhook(drop_pending_updates=True)
+    except Exception as e:
+        print(f"Errore durante la pulizia del webhook: {e}")
+        
     print("Bot avviato correttamente...")
-    bot.infinity_polling(skip_pending=True, logger_level=None)
+    # infinity_polling garantisce la riconnessione in caso di caduta
+    bot.infinity_polling(skip_pending=True)
